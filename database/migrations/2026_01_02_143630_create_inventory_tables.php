@@ -14,7 +14,7 @@ return new class extends Migration {
             $t->string('item_name');
             $t->string('unit', 30)->nullable();
 
-            $t->decimal('on_hand_qty', 12, 3)->default(0);
+            $t->decimal('on_hand', 12, 3)->default(0);
 
             $t->timestampsTz();
 

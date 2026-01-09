@@ -10,14 +10,17 @@ class InventoryItem extends Model
     use HasUuids;
 
     protected $table = 'inventory_items';
+
     protected $fillable = [
-        'id','branch_id','item_name','unit','on_hand_qty','reserved_qty','meta'
+        'id',
+        'branch_id',
+        'item_name',
+        'unit',
+        'on_hand',
     ];
 
     protected $casts = [
-        'on_hand_qty' => 'decimal:3',
-        'reserved_qty' => 'decimal:3',
-        'meta' => 'array',
+        'on_hand' => 'decimal:3',
     ];
 
     public function lots()

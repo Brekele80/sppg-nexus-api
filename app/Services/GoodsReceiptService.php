@@ -92,11 +92,11 @@ class GoodsReceiptService
 
                 $inv = InventoryItem::firstOrCreate(
                     ['branch_id' => $gr->branch_id, 'item_name' => $it->item_name, 'unit' => $it->unit],
-                    ['on_hand_qty' => 0]
+                    ['on_hand' => 0]
                 );
 
                 // Update snapshot
-                $inv->update(['on_hand_qty' => DB::raw("on_hand_qty + {$qtyIn}")]);
+                $inv->update(['on_hand' => DB::raw("on_hand + {$qtyIn}")]);
 
                 InventoryMovement::create([
                     'branch_id' => $gr->branch_id,

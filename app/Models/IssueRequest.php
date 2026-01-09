@@ -10,7 +10,7 @@ class IssueRequest extends Model
     use HasUuids;
 
     protected $fillable = [
-        'branch_id','ir_number','status',
+        'id','branch_id','ir_number','status',
         'created_by','approved_by','issued_by',
         'submitted_at','approved_at','issued_at',
         'notes','meta'
@@ -26,5 +26,10 @@ class IssueRequest extends Model
     public function items()
     {
         return $this->hasMany(IssueRequestItem::class, 'issue_request_id');
+    }
+
+    public function allocations()
+    {
+        return $this->hasMany(\App\Models\IssueAllocation::class, 'issue_request_item_id');
     }
 }

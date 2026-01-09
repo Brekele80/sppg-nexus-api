@@ -12,12 +12,20 @@ class IssueAllocation extends Model
     protected $table = 'issue_allocations';
 
     protected $fillable = [
-        'id','issue_request_item_id','inventory_lot_id',
-        'qty','unit_cost'
+        'id',
+        'issue_request_item_id',
+        'inventory_item_id',
+        'qty',
+        'unit_cost',
     ];
 
     protected $casts = [
         'qty' => 'decimal:3',
         'unit_cost' => 'decimal:2',
     ];
+
+    public function item()
+    {
+        return $this->belongsTo(IssueRequestItem::class, 'issue_request_item_id');
+    }
 }

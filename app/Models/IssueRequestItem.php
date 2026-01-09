@@ -25,6 +25,6 @@ class IssueRequestItem extends Model
 
     public function allocations()
     {
-        return $this->hasMany(IssueAllocation::class, 'issue_request_item_id');
+        return $this->hasMany(\App\Models\IssueAllocation::class, 'issue_request_item_id');
     }
 }
