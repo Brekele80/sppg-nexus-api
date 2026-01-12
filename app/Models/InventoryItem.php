@@ -27,4 +27,9 @@ class InventoryItem extends Model
     {
         return $this->hasMany(InventoryLot::class, 'inventory_item_id');
     }
+
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class, 'branch_id');
+    }
 }

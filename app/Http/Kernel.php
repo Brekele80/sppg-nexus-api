@@ -48,5 +48,6 @@ class Kernel extends HttpKernel
         'supabase' => \App\Http\Middleware\VerifySupabaseJwt::class,
         'idempotency' => \App\Http\Middleware\IdempotencyMiddleware::class,
         'requireRole' => \App\Http\Middleware\RequireRole::class,
+        'requireCompany' => \App\Http\Middleware\RequireCompanyContext::class,
     ];
 }

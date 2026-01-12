@@ -10,7 +10,16 @@ class Profile extends Model
     protected $keyType = 'string';
 
     protected $fillable = [
-        'id', 'email', 'full_name', 'branch_id', 'is_active',
+        'id',
+        'company_id',
+        'email',
+        'full_name',
+        'branch_id',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
     ];
 
     public function roles()

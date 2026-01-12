@@ -9,12 +9,14 @@ class MeController extends BaseApiController
     public function show(Request $request)
     {
         $u = $this->authUser($request);
+
         return response()->json([
-            'id' => $u->id,
-            'email' => $u->email,
-            'full_name' => $u->full_name,
-            'branch_id' => $u->branch_id,
-            'roles' => $u->roleCodes(),
+            'id'         => $u->id,
+            'email'      => $u->email,
+            'full_name'  => $u->full_name,
+            'company_id' => $u->company_id,
+            'branch_id'  => $u->branch_id,
+            'roles'      => $u->roleCodes(),
         ]);
     }
 }

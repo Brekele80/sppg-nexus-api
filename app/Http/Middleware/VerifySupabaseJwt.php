@@ -6,10 +6,11 @@ use App\Models\Profile;
 use Closure;
 use Firebase\JWT\JWK;
 use Firebase\JWT\JWT;
-use Firebase\JWT\Key;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 
 class VerifySupabaseJwt
 {
@@ -29,67 +30,277 @@ class VerifySupabaseJwt
         try {
             $decoded = $this->decodeJwt($m[1]);
 
-            if (($decoded->iss ?? null) !== config('services.supabase.issuer')) {
-                return response()->json(['error'=>['code'=>'auth_invalid_issuer','message'=>'Invalid issuer']],401);
+            // ---- issuer
+            $issuer = config('services.supabase.issuer');
+            if ($issuer && (($decoded->iss ?? null) !== $issuer)) {
+                return response()->json([
+                    'error' => ['code' => 'auth_invalid_issuer', 'message' => 'Invalid issuer']
+                ], 401);
             }
 
-            if (($decoded->aud ?? null) !== config('services.supabase.audience')) {
-                return response()->json(['error'=>['code'=>'auth_invalid_audience','message'=>'Invalid audience']],401);
+            // ---- audience (Supabase can be string or array)
+            $expectedAud = config('services.supabase.audience');
+            if ($expectedAud) {
+                $aud = $decoded->aud ?? null;
+
+                $audOk = false;
+                if (is_string($aud)) {
+                    $audOk = ($aud === $expectedAud);
+                } elseif (is_array($aud)) {
+                    $audOk = in_array($expectedAud, $aud, true);
+                }
+
+                if (!$audOk) {
+                    return response()->json([
+                        'error' => ['code' => 'auth_invalid_audience', 'message' => 'Invalid audience']
+                    ], 401);
+                }
             }
 
-            $profile = Profile::firstOrCreate(
-                ['id' => $decoded->sub],
-                ['email'=>$decoded->email ?? '', 'is_active'=>true]
-            );
+            $sub = $decoded->sub ?? null;
+            if (!$sub || !is_string($sub)) {
+                return response()->json([
+                    'error' => ['code' => 'auth_invalid_token', 'message' => 'Missing sub']
+                ], 401);
+            }
+
+            // Token fields (best-effort)
+            $email = isset($decoded->email) && is_string($decoded->email) ? $decoded->email : '';
+            $fullName = '';
+
+            // Supabase often stores this in user_metadata
+            if (isset($decoded->user_metadata) && is_object($decoded->user_metadata)) {
+                $um = $decoded->user_metadata;
+                if (isset($um->full_name) && is_string($um->full_name)) {
+                    $fullName = $um->full_name;
+                } elseif (isset($um->name) && is_string($um->name)) {
+                    $fullName = $um->name;
+                }
+            }
+
+            // Determine company_id from token if you later add it as a custom claim
+            $companyIdFromToken = $this->extractCompanyId($decoded);
+
+            $profile = DB::transaction(function () use ($sub, $email, $fullName, $companyIdFromToken) {
+
+                /** @var Profile $profile */
+                $profile = Profile::lockForUpdate()->firstOrCreate(
+                    ['id' => $sub],
+                    [
+                        'email' => $email,
+                        'full_name' => $fullName ?: null,
+                        'is_active' => true,
+                        // company_id will be fixed below
+                    ]
+                );
+
+                if (!$profile->is_active) {
+                    // Let caller return 403 cleanly
+                    return $profile;
+                }
+
+                // Keep profile fields fresh (non-destructive)
+                $dirty = false;
+
+                if ($email && $profile->email !== $email) {
+                    $profile->email = $email;
+                    $dirty = true;
+                }
+                if ($fullName && $profile->full_name !== $fullName) {
+                    $profile->full_name = $fullName;
+                    $dirty = true;
+                }
+
+                // Ensure company_id exists (critical for requireCompany)
+                if (empty($profile->company_id)) {
+                    $resolvedCompanyId = null;
+
+                    // Prefer token company_id if present
+                    if ($companyIdFromToken) {
+                        $resolvedCompanyId = $companyIdFromToken;
+                    }
+
+                    // Else, infer from branch_id if set
+                    if (!$resolvedCompanyId && !empty($profile->branch_id)) {
+                        $branchCompanyId = DB::table('branches')->where('id', $profile->branch_id)->value('company_id');
+                        if ($branchCompanyId) {
+                            $resolvedCompanyId = $branchCompanyId;
+                        }
+                    }
+
+                    // Else, fall back to DEFAULT company or first company
+                    if (!$resolvedCompanyId) {
+                        $resolvedCompanyId = DB::table('companies')->where('code', 'DEFAULT')->value('id')
+                            ?: DB::table('companies')->orderBy('created_at')->value('id');
+                    }
+
+                    if (!$resolvedCompanyId) {
+                        // This should never happen after your migrations, but keep it safe.
+                        throw new \RuntimeException('No company exists to assign to profile.');
+                    }
+
+                    $profile->company_id = $resolvedCompanyId;
+                    $dirty = true;
+                }
+
+                // If branch_id exists, enforce branch.company_id == profile.company_id
+                if (!empty($profile->branch_id)) {
+                    $branchCompanyId = DB::table('branches')->where('id', $profile->branch_id)->value('company_id');
+
+                    if ($branchCompanyId && $branchCompanyId !== $profile->company_id) {
+                        // This indicates data inconsistency (user assigned to wrong-tenant branch).
+                        // Production stance: block access rather than silently switching.
+                        throw new \RuntimeException('Branch company mismatch for profile.');
+                    }
+
+                    // Ensure profile_branch_access mapping exists
+                    $exists = DB::table('profile_branch_access')
+                        ->where('profile_id', $profile->id)
+                        ->where('branch_id', $profile->branch_id)
+                        ->exists();
+
+                    if (!$exists) {
+                        DB::table('profile_branch_access')->insert([
+                            'id' => (string) Str::uuid(),
+                            'company_id' => $profile->company_id,
+                            'profile_id' => $profile->id,
+                            'branch_id' => $profile->branch_id,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+
+                if ($dirty) {
+                    $profile->save();
+                }
+
+                return $profile;
+            });
 
             if (!$profile->is_active) {
-                return response()->json(['error'=>['code'=>'user_disabled','message'=>'User disabled']],403);
+                return response()->json([
+                    'error' => ['code' => 'user_disabled', 'message' => 'User disabled']
+                ], 403);
             }
 
+            // Attach to request
             $request->attributes->set('auth_user', $profile);
+
             return $next($request);
 
         } catch (\Throwable $e) {
+            // If you want more debug in local:
+            // logger()->error('auth_invalid_token', ['err' => $e->getMessage()]);
             return response()->json([
-                'error' => ['code'=>'auth_invalid_token','message'=>'Invalid token']
+                'error' => ['code' => 'auth_invalid_token', 'message' => 'Invalid token']
             ], 401);
         }
     }
 
+    private function extractCompanyId(object $decoded): ?string
+    {
+        // If you later add a custom claim like: company_id
+        if (isset($decoded->company_id) && is_string($decoded->company_id) && Str::isUuid($decoded->company_id)) {
+            return $decoded->company_id;
+        }
+
+        // Or in app_metadata
+        if (isset($decoded->app_metadata) && is_object($decoded->app_metadata)) {
+            $am = $decoded->app_metadata;
+            if (isset($am->company_id) && is_string($am->company_id) && Str::isUuid($am->company_id)) {
+                return $am->company_id;
+            }
+        }
+
+        // Or in user_metadata
+        if (isset($decoded->user_metadata) && is_object($decoded->user_metadata)) {
+            $um = $decoded->user_metadata;
+            if (isset($um->company_id) && is_string($um->company_id) && Str::isUuid($um->company_id)) {
+                return $um->company_id;
+            }
+        }
+
+        return null;
+    }
+
     private function decodeJwt(string $jwt): object
     {
-        [$kid] = $this->extractHeader($jwt);
-        $jwks = $this->getJwksCached();
+        $kid = $this->extractKid($jwt);
+        if (!$kid) {
+            throw new \RuntimeException('Missing kid');
+        }
+
+        $jwks = $this->getJwksCached(false);
 
         if (!$this->jwksHasKid($jwks, $kid)) {
             Cache::forget('supabase_jwks');
             $jwks = $this->getJwksCached(true);
-            if (!$this->jwksHasKid($jwks, $kid)) throw new \Exception("Unknown KID");
+
+            if (!$this->jwksHasKid($jwks, $kid)) {
+                throw new \RuntimeException('Unknown KID');
+            }
         }
 
         JWT::$leeway = $this->leeway;
+
+        // Will validate exp/nbf automatically
         return JWT::decode($jwt, JWK::parseKeySet($jwks));
     }
 
-    private function extractHeader(string $jwt): array
+    private function extractKid(string $jwt): ?string
     {
-        $header = json_decode(JWT::urlsafeB64Decode(explode('.', $jwt)[0]));
-        return [$header->kid ?? null];
+        $parts = explode('.', $jwt);
+        if (count($parts) < 2) return null;
+
+        $headerJson = JWT::urlsafeB64Decode($parts[0]);
+        $header = json_decode($headerJson);
+
+        if (!is_object($header)) return null;
+
+        $kid = $header->kid ?? null;
+        return is_string($kid) && $kid !== '' ? $kid : null;
     }
 
     private function getJwksCached(bool $force = false): array
     {
-        return Cache::remember('supabase_jwks', $this->jwksTtl, fn() => $this->fetchJwks());
+        if ($force) {
+            $jwks = $this->fetchJwks();
+            Cache::put('supabase_jwks', $jwks, $this->jwksTtl);
+            return $jwks;
+        }
+
+        return Cache::remember('supabase_jwks', $this->jwksTtl, function () {
+            return $this->fetchJwks();
+        });
     }
 
     private function fetchJwks(): array
     {
-        return Http::get(config('services.supabase.jwks_url'))->json();
+        $url = config('services.supabase.jwks_url');
+        if (!$url) {
+            throw new \RuntimeException('Missing services.supabase.jwks_url');
+        }
+
+        $json = Http::timeout(10)->get($url)->json();
+
+        if (!is_array($json) || !isset($json['keys']) || !is_array($json['keys'])) {
+            throw new \RuntimeException('Invalid JWKS response');
+        }
+
+        return $json;
     }
 
     private function jwksHasKid(array $jwks, string $kid): bool
     {
-        foreach ($jwks['keys'] as $k) if ($k['kid'] === $kid) return true;
+        if (!isset($jwks['keys']) || !is_array($jwks['keys'])) return false;
+
+        foreach ($jwks['keys'] as $k) {
+            if (is_array($k) && isset($k['kid']) && $k['kid'] === $kid) {
+                return true;
+            }
+        }
+
         return false;
     }
 }

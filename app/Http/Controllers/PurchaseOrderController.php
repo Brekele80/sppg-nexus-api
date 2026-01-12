@@ -119,17 +119,47 @@ class PurchaseOrderController extends Controller
     public function show(Request $request, string $id)
     {
         $u = AuthUser::get($request);
-        AuthUser::requireBranch($u);
 
         $po = PurchaseOrder::where('id', $id)->firstOrFail();
 
-        // PURCHASE_CABANG can see within branch; SUPPLIER can see if assigned
-        if ($u->hasRole('SUPPLIER')) {
-            if ($po->supplier_id !== $u->id) abort(403, 'Forbidden (not your PO)');
-        } else {
-            if ($po->branch_id !== $u->branch_id) abort(403, 'Forbidden (cross-branch)');
+        // Normalize roles to a simple array of strings
+        $roles = [];
+        if (isset($u->roles) && is_array($u->roles)) {
+            $roles = $u->roles;
+        } elseif (isset($u->roles) && $u->roles instanceof \Illuminate\Support\Collection) {
+            $roles = $u->roles->all();
         }
 
-        return response()->json($po->load('items'), 200);
+        $isSupplier   = in_array('SUPPLIER', $roles, true);
+        $isAccounting = in_array('ACCOUNTING', $roles, true);
+        $isDcAdmin    = in_array('DC_ADMIN', $roles, true);
+        $isChef       = in_array('CHEF', $roles, true);
+
+        // Supplier can only see their own PO
+        if ($isSupplier) {
+            if ($po->supplier_id !== $u->id) {
+                abort(403, 'Forbidden (not your PO)');
+            }
+            return response()->json($po->load('items'), 200);
+        }
+
+        // Accounting is global read (no branch enforcement)
+        if ($isAccounting) {
+            return response()->json($po->load('items'), 200);
+        }
+
+        // Branch-scoped roles (CHEF/DC_ADMIN) must have branch_id and match
+        if ($isChef || $isDcAdmin) {
+            if (empty($u->branch_id)) {
+                abort(403, 'Forbidden (missing branch_id)');
+            }
+            if ($po->branch_id !== $u->branch_id) {
+                abort(403, 'Forbidden (cross-branch)');
+            }
+            return response()->json($po->load('items'), 200);
+        }
+
+        // Default deny
+        abort(403, 'Forbidden');
     }
 }
