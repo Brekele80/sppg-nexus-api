@@ -8,6 +8,7 @@ use App\Models\PurchaseRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Support\AuthUser;
 
 class RabController extends BaseApiController
 {
@@ -16,7 +17,18 @@ class RabController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
 
-        $pr = PurchaseRequest::findOrFail($prId);
+        $companyId = AuthUser::companyId($request);
+        $allowed = AuthUser::allowedBranchIds($request);
+
+        // Company-safe PR load
+        $pr = PurchaseRequest::query()
+            ->where('purchase_requests.id', $prId)
+            ->join('branches as b', 'b.id', '=', 'purchase_requests.branch_id')
+            ->where('b.company_id', $companyId)
+            ->select('purchase_requests.*')
+            ->firstOrFail();
+
+        if (!in_array($pr->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
 
         $data = $request->validate([
             'currency' => 'nullable|string|max:10',
@@ -53,15 +65,20 @@ class RabController extends BaseApiController
     public function show(Request $request, string $id)
     {
         $this->authUser($request);
-        return response()->json($this->loadRab($id));
+        $companyId = AuthUser::companyId($request);
+
+        $rab = $this->loadRabGuarded($companyId, $id, $request);
+        return response()->json($rab);
     }
 
     public function updateDraft(Request $request, string $id)
     {
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
+        $companyId = AuthUser::companyId($request);
 
-        $rab = RabVersion::findOrFail($id);
+        $rab = $this->loadRabGuarded($companyId, $id, $request);
+
         if ($rab->status !== 'DRAFT') {
             return response()->json(['message' => 'Only DRAFT RAB can be edited'], 422);
         }
@@ -90,7 +107,11 @@ class RabController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
 
-        $rab = RabVersion::with('lineItems')->findOrFail($id);
+        $companyId = AuthUser::companyId($request);
+        $rab = $this->loadRabGuarded($companyId, $id, $request);
+
+        $rab->load('lineItems');
+
         if ($rab->status !== 'DRAFT') {
             return response()->json(['message' => 'Only DRAFT RAB can be submitted'], 422);
         }
@@ -121,7 +142,10 @@ class RabController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
 
-        $rab = RabVersion::with('lineItems')->findOrFail($id);
+        $companyId = AuthUser::companyId($request);
+        $rab = $this->loadRabGuarded($companyId, $id, $request);
+        $rab->load('lineItems');
+
         if ($rab->status !== 'NEEDS_REVISION') {
             return response()->json(['message' => 'Only NEEDS_REVISION RAB can be revised'], 422);
         }
@@ -142,7 +166,6 @@ class RabController extends BaseApiController
                 'total' => 0,
             ]);
 
-            // Copy line items as baseline
             $items = $rab->lineItems->map(function ($li) {
                 return [
                     'item_name' => $li->item_name,
@@ -200,5 +223,24 @@ class RabController extends BaseApiController
     private function loadRab(string $id)
     {
         return RabVersion::with('lineItems')->findOrFail($id);
+    }
+
+    private function loadRabGuarded(string $companyId, string $rabId, Request $request)
+    {
+        $rab = RabVersion::with('lineItems')->findOrFail($rabId);
+
+        $pr = DB::table('purchase_requests as pr')
+            ->join('branches as b', 'b.id', '=', 'pr.branch_id')
+            ->where('pr.id', $rab->purchase_request_id)
+            ->where('b.company_id', $companyId)
+            ->select('pr.branch_id')
+            ->first();
+
+        if (!$pr) abort(404, 'Not found');
+
+        $allowed = AuthUser::allowedBranchIds($request);
+        if (!in_array($pr->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
+
+        return $rab;
     }
 }

@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\GoodsReceipt;
 use App\Models\GoodsReceiptItem;
-use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -55,21 +54,34 @@ class GoodsReceiptService
         return $gr->fresh()->load('items');
     }
 
-    public function receive(GoodsReceipt $gr, string $actorId): GoodsReceipt
+    /**
+     * FIFO canonical receive:
+     * - creates lots
+     * - updates inventory_items.on_hand
+     * - creates inventory_movements with signed qty and schema columns
+     */
+    public function receive(GoodsReceipt $gr, string $actorId, InventoryService $inv): GoodsReceipt
     {
-        if (!in_array($gr->status, ['SUBMITTED'], true)) {
+        if ($gr->status !== 'SUBMITTED') {
             throw new \RuntimeException('Only SUBMITTED receipts can be received');
         }
 
-        return DB::transaction(function () use ($gr, $actorId) {
-            // Determine discrepancy
+        return DB::transaction(function () use ($gr, $actorId, $inv) {
+
+            $gr = GoodsReceipt::with(['items', 'purchaseOrder', 'purchaseOrder.items'])
+                ->lockForUpdate()
+                ->findOrFail($gr->id);
+
+            $po = $gr->purchaseOrder;
+            $poItems = $po ? $po->items->keyBy('id') : collect();
+
             $hasDiscrepancy = false;
+
             foreach ($gr->items as $it) {
                 $ordered = (float) $it->ordered_qty;
                 $received = (float) $it->received_qty;
                 $rejected = (float) $it->rejected_qty;
 
-                // Basic validity
                 if ($received < 0 || $rejected < 0) {
                     throw new \RuntimeException('received_qty/rejected_qty must be >= 0');
                 }
@@ -77,34 +89,47 @@ class GoodsReceiptService
                     throw new \RuntimeException('received_qty + rejected_qty cannot exceed ordered_qty');
                 }
 
-                if (($received + $rejected) < $ordered - 0.0001) {
-                    $hasDiscrepancy = true; // partial / missing
-                }
-                if ($rejected > 0.0001) {
-                    $hasDiscrepancy = true;
-                }
+                if (($received + $rejected) < $ordered - 0.0001) $hasDiscrepancy = true;
+                if ($rejected > 0.0001) $hasDiscrepancy = true;
             }
 
-            // Post inventory movements for received quantities
             foreach ($gr->items as $it) {
                 $qtyIn = (float) $it->received_qty;
                 if ($qtyIn <= 0) continue;
 
-                $inv = InventoryItem::firstOrCreate(
-                    ['branch_id' => $gr->branch_id, 'item_name' => $it->item_name, 'unit' => $it->unit],
-                    ['on_hand' => 0]
-                );
+                $poItem = $poItems->get($it->purchase_order_item_id);
+                $unitCost = $poItem ? (float) $poItem->unit_price : 0;
 
-                // Update snapshot
-                $inv->update(['on_hand' => DB::raw("on_hand + {$qtyIn}")]);
+                $invItem = $inv->ensureItem($gr->branch_id, $it->item_name, $it->unit);
+
+                $lot = $inv->receiveIntoLot([
+                    'branch_id' => $gr->branch_id,
+                    'inventory_item_id' => $invItem->id,
+                    'goods_receipt_id' => $gr->id,
+                    'goods_receipt_item_id' => $it->id,
+                    'qty' => $qtyIn,
+                    'unit_cost' => $unitCost,
+                    'currency' => $po->currency ?? 'IDR',
+                    'received_at' => now(),
+                ]);
+
+                $inv->addOnHand($invItem, $qtyIn);
 
                 InventoryMovement::create([
+                    'id' => (string) Str::uuid(),
                     'branch_id' => $gr->branch_id,
-                    'inventory_item_id' => $inv->id,
+                    'inventory_item_id' => $invItem->id,
+                    'inventory_lot_id' => $lot->id,
+
                     'type' => 'GR_IN',
-                    'qty' => $qtyIn,
-                    'ref_id' => $gr->id,
+                    'qty'  => $qtyIn,
+
+                    'source_type' => 'GR',
+                    'source_id'   => $gr->id,
+
                     'ref_type' => 'goods_receipts',
+                    'ref_id'   => $gr->id,
+
                     'actor_id' => $actorId,
                     'note' => "Received via {$gr->gr_number}",
                 ]);

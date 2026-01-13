@@ -15,7 +15,7 @@ return new class extends Migration
             $table->uuid('branch_id');
             $table->timestamps();
 
-            $table->unique(['profile_id', 'branch_id']);
+            $table->unique(['company_id', 'profile_id', 'branch_id']);
 
             $table->index(['company_id', 'profile_id']);
             $table->index(['company_id', 'branch_id']);

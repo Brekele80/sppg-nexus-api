@@ -9,20 +9,22 @@ use App\Services\InventoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Support\AuthUser;
 
 class KitchenIssueController extends Controller
 {
-    
-
     private function nextIrNumber(): string
     {
-        // Example: IR-20260109-AB12CD (date + random)
         return 'IR-' . now()->format('Ymd') . '-' . strtoupper(Str::random(6));
     }
 
     public function create(Request $request)
     {
-        $user = $request->attributes->get('auth_user');
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['CHEF']);
+
+        AuthUser::requireCompanyContext($request);
+        $branchId = AuthUser::requireBranchAccess($request);
 
         $request->validate([
             'notes' => 'nullable|string|max:2000',
@@ -33,11 +35,11 @@ class KitchenIssueController extends Controller
             'items.*.remarks' => 'nullable|string|max:2000',
         ]);
 
-        return DB::transaction(function () use ($request, $user) {
+        return DB::transaction(function () use ($request, $u, $branchId) {
             $issue = IssueRequest::create([
                 'id'        => (string) Str::uuid(),
-                'branch_id' => $user->branch_id,
-                'created_by'=> $user->id,
+                'branch_id' => $branchId,
+                'created_by'=> $u->id,
                 'status'    => 'DRAFT',
                 'ir_number' => $this->nextIrNumber(),
                 'notes'     => $request->input('notes'),
@@ -45,7 +47,7 @@ class KitchenIssueController extends Controller
 
             foreach ($request->input('items') as $it) {
                 IssueRequestItem::create([
-                    'id' => Str::uuid(),
+                    'id' => (string) Str::uuid(),
                     'issue_request_id' => $issue->id,
                     'inventory_item_id' => null,
                     'item_name' => $it['item_name'],
@@ -55,16 +57,25 @@ class KitchenIssueController extends Controller
                 ]);
             }
 
-            $issue->load('items');
-            return response()->json($issue, 201);
+            return response()->json($issue->load('items'), 201);
         });
     }
 
     public function submit(Request $request, string $id)
     {
-        $user = $request->attributes->get('auth_user');
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['CHEF']);
+
+        $companyId = AuthUser::requireCompanyContext($request);
+        $allowed = AuthUser::allowedBranchIds($request);
 
         $issue = IssueRequest::with('items')->findOrFail($id);
+
+        $ok = DB::table('branches')->where('id', $issue->branch_id)->where('company_id', $companyId)->exists();
+        if (!$ok) abort(404, 'Not found');
+
+        if (!in_array($issue->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
+
         if ($issue->status !== 'DRAFT') {
             return response()->json(['error'=>['code'=>'issue_invalid_state','message'=>'Must be DRAFT']], 409);
         }
@@ -73,21 +84,28 @@ class KitchenIssueController extends Controller
         $issue->submitted_at = now();
         $issue->save();
 
-        $issue->load('items');
-        return response()->json($issue);
+        return response()->json($issue->fresh()->load('items'));
     }
 
-    // DC role
     public function approve(Request $request, string $id)
     {
-        $user = $request->attributes->get('auth_user');
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['DC_ADMIN']);
+
+        $companyId = AuthUser::requireCompanyContext($request);
+        $allowed = AuthUser::allowedBranchIds($request);
 
         $issue = IssueRequest::with('items')->findOrFail($id);
+
+        $ok = DB::table('branches')->where('id', $issue->branch_id)->where('company_id', $companyId)->exists();
+        if (!$ok) abort(404, 'Not found');
+
+        if (!in_array($issue->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
+
         if ($issue->status !== 'SUBMITTED') {
             return response()->json(['error'=>['code'=>'issue_invalid_state','message'=>'Must be SUBMITTED']], 409);
         }
 
-        // Default: approved_qty = requested_qty if not set
         foreach ($issue->items as $it) {
             if ((float)$it->approved_qty <= 0) {
                 $it->approved_qty = $it->requested_qty;
@@ -97,50 +115,53 @@ class KitchenIssueController extends Controller
 
         $issue->status = 'APPROVED';
         $issue->approved_at = now();
-        $issue->approved_by = $user?->id; // optional if you track it
+        $issue->approved_by = $u->id;
         $issue->save();
 
         return response()->json($issue->fresh('items'));
     }
 
-    // DC role + idempotency
     public function issue(Request $request, string $id, InventoryService $inv)
     {
-        $user = $request->attributes->get('auth_user');
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['DC_ADMIN']);
 
-        return DB::transaction(function () use ($id, $user, $inv) {
+        $companyId = AuthUser::requireCompanyContext($request);
+        $allowed = AuthUser::allowedBranchIds($request);
+
+        return DB::transaction(function () use ($id, $u, $companyId, $allowed, $inv) {
 
             $issue = IssueRequest::with('items')
                 ->lockForUpdate()
                 ->findOrFail($id);
 
+            $ok = DB::table('branches')->where('id', $issue->branch_id)->where('company_id', $companyId)->exists();
+            if (!$ok) abort(404, 'Not found');
+
+            if (!in_array($issue->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
+
             if ($issue->status !== 'APPROVED') {
-                return response()->json([
-                    'error' => ['code'=>'issue_invalid_state','message'=>'Must be APPROVED']
-                ], 409);
+                return response()->json(['error' => ['code'=>'issue_invalid_state','message'=>'Must be APPROVED']], 409);
             }
 
             foreach ($issue->items as $it) {
-
                 $approved  = (float) $it->approved_qty;
                 $requested = (float) $it->requested_qty;
                 $qtyToIssue = $approved > 0 ? $approved : $requested;
                 if ($qtyToIssue <= 0) continue;
 
-                // Ensure inventory item exists
                 $invItem = $inv->ensureItem($issue->branch_id, $it->item_name, $it->unit);
 
-                // FIFO lot consume
+                // FIFO consume (updates lots with lockForUpdate in service)
                 $allocs = $inv->fifoConsume($issue->branch_id, $invItem->id, $qtyToIssue);
 
-                // Update on hand
+                // Update snapshot
                 $inv->subOnHand($invItem, $qtyToIssue);
 
                 foreach ($allocs as $a) {
                     $lot = $a['lot'];
-                    $take = (float)$a['qty'];
+                    $take = (float) $a['qty'];
 
-                    // Correct Issue Allocation insert
                     $it->allocations()->create([
                         'id'                => (string) Str::uuid(),
                         'inventory_item_id' => $invItem->id,
@@ -148,20 +169,23 @@ class KitchenIssueController extends Controller
                         'unit_cost'         => (float) $lot->unit_cost,
                     ]);
 
-                    // Correct Inventory Movement insert
                     InventoryMovement::create([
                         'id'                => (string) Str::uuid(),
                         'branch_id'         => $issue->branch_id,
                         'inventory_item_id' => $invItem->id,
                         'inventory_lot_id'  => $lot->id,
-                        'type'              => 'ISSUE',
-                        'qty'               => $take,
-                        'ref_type'          => 'ISSUE',
-                        'ref_id'            => $issue->id,
-                        'source_type'       => 'ISSUE',
-                        'source_id'         => $issue->id,
-                        'actor_id'          => $user->id,
-                        'note'              => 'Kitchen issue',
+
+                        'type' => 'ISSUE_OUT',
+                        'qty'  => -1 * $take, // negative OUT (schema)
+
+                        'source_type' => 'ISSUE',
+                        'source_id'   => $issue->id,
+
+                        'ref_type' => 'issue_requests',
+                        'ref_id'   => $issue->id,
+
+                        'actor_id' => $u->id,
+                        'note'     => 'Kitchen issue ' . ($issue->ir_number ?? ''),
                     ]);
                 }
 
@@ -172,7 +196,7 @@ class KitchenIssueController extends Controller
 
             $issue->status = 'ISSUED';
             $issue->issued_at = now();
-            $issue->issued_by = $user->id;
+            $issue->issued_by = $u->id;
             $issue->save();
 
             return response()->json($issue->fresh(['items.allocations']));

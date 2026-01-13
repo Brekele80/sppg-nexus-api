@@ -3,23 +3,17 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Notifications\Notifiable;
 
 class Profile extends Model
 {
+    use Notifiable;
+
     public $incrementing = false;
     protected $keyType = 'string';
 
     protected $fillable = [
-        'id',
-        'company_id',
-        'email',
-        'full_name',
-        'branch_id',
-        'is_active',
-    ];
-
-    protected $casts = [
-        'is_active' => 'boolean',
+        'id', 'email', 'full_name', 'branch_id', 'company_id', 'is_active',
     ];
 
     public function roles()

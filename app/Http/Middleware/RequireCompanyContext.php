@@ -12,11 +12,11 @@ class RequireCompanyContext
     {
         $u = $request->attributes->get('auth_user');
 
-        if (!$u) {
+        if (!$u || empty($u->company_id)) {
             return response()->json([
                 'error' => [
-                    'code' => 'unauthenticated',
-                    'message' => 'Unauthenticated',
+                    'code' => 'unauthorized',
+                    'message' => 'Missing company context',
                 ],
             ], 401);
         }

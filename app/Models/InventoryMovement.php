@@ -12,17 +12,26 @@ class InventoryMovement extends Model
     public $incrementing = false;
     protected $keyType = 'string';
 
+    protected $table = 'inventory_movements';
+
     protected $fillable = [
         'id',
         'branch_id',
         'inventory_item_id',
-        'direction',     // IN / OUT
-        'qty',
-        'unit',
-        'source_type',   // GR, ISSUE, ADJUSTMENT, etc.
+
+        // schema columns (per your migrations)
+        'type',          // e.g. GR_IN, ISSUE_OUT, ADJUSTMENT
+        'qty',           // signed: +IN, -OUT
+
+        'inventory_lot_id',
+        'source_type',   // GR, ISSUE, ADJUSTMENT
         'source_id',
-        'notes',
+
+        'ref_id',
+        'ref_type',
+
         'actor_id',
+        'note',
     ];
 
     protected $casts = [

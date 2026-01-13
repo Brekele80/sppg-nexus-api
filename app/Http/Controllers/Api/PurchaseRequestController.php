@@ -7,6 +7,7 @@ use App\Models\PurchaseRequestItem;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use App\Support\AuthUser;
 
 class PurchaseRequestController extends BaseApiController
 {
@@ -14,6 +15,8 @@ class PurchaseRequestController extends BaseApiController
     {
         $u = $this->authUser($request);
         $this->requireRole($u, ['CHEF']);
+
+        $companyId = AuthUser::requireCompanyContext($request);
 
         $data = $request->validate([
             'branch_id' => 'required|uuid',
@@ -25,10 +28,30 @@ class PurchaseRequestController extends BaseApiController
             'items.*.remarks' => 'nullable|string',
         ]);
 
-        return DB::transaction(function () use ($u, $data) {
+        // Branch must be inside company
+        $branchOk = DB::table('branches')
+            ->where('id', $data['branch_id'])
+            ->where('company_id', $companyId)
+            ->exists();
+
+        if (!$branchOk) {
+            return response()->json([
+                'error' => ['code' => 'branch_invalid', 'message' => 'Branch not found in company']
+            ], 422);
+        }
+
+        // User must have access to this branch (unless company-wide role)
+        $allowed = AuthUser::allowedBranchIds($request);
+        if (!in_array($data['branch_id'], $allowed, true)) {
+            return response()->json([
+                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+            ], 403);
+        }
+
+        return DB::transaction(function () use ($request, $u, $data, $companyId) {
             $prId = (string) Str::uuid();
 
-            $pr = PurchaseRequest::create([
+            PurchaseRequest::create([
                 'id' => $prId,
                 'branch_id' => $data['branch_id'],
                 'requested_by' => $u->id,
@@ -47,32 +70,37 @@ class PurchaseRequestController extends BaseApiController
                 ]);
             }
 
-            return response()->json($this->loadPr($prId), 201);
+            return response()->json($this->loadPrGuarded($request, $companyId, $prId), 201);
         });
     }
 
     public function index(Request $request)
     {
-        $u = $this->authUser($request);
+        $this->authUser($request);
+        $companyId = AuthUser::requireCompanyContext($request);
 
-        $q = PurchaseRequest::query();
-
-        // Basic branch scoping (recommended)
-        if ($u->branch_id) {
-            $q->where('branch_id', $u->branch_id);
+        $allowedBranchIds = AuthUser::allowedBranchIds($request);
+        if (empty($allowedBranchIds)) {
+            return response()->json([
+                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
+            ], 403);
         }
+
+        $q = PurchaseRequest::query()->whereIn('branch_id', $allowedBranchIds);
 
         if ($request->filled('status')) {
-            $q->where('status', $request->string('status'));
+            $q->where('status', (string) $request->string('status'));
         }
 
-        return response()->json($q->orderByDesc('created_at')->limit(200)->get());
+        return response()->json($q->orderByDesc('created_at')->limit(200)->get(), 200);
     }
 
     public function show(Request $request, string $id)
     {
         $this->authUser($request);
-        return response()->json($this->loadPr($id));
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        return response()->json($this->loadPrGuarded($request, $companyId, $id), 200);
     }
 
     public function submit(Request $request, string $id)
@@ -80,7 +108,10 @@ class PurchaseRequestController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['CHEF']);
 
-        $pr = PurchaseRequest::findOrFail($id);
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        $pr = $this->loadPrGuarded($request, $companyId, $id);
+
         if ($pr->status !== 'DRAFT') {
             return response()->json(['message' => 'Only DRAFT PR can be submitted'], 422);
         }
@@ -98,11 +129,25 @@ class PurchaseRequestController extends BaseApiController
             'created_at' => now(),
         ]);
 
-        return response()->json($this->loadPr($id));
+        return response()->json($this->loadPrGuarded($request, $companyId, $id), 200);
     }
 
-    private function loadPr(string $id)
+    private function loadPrGuarded(Request $request, string $companyId, string $id): PurchaseRequest
     {
-        return PurchaseRequest::with(['items'])->findOrFail($id);
+        $pr = PurchaseRequest::with(['items'])->findOrFail($id);
+
+        $branchOk = DB::table('branches')
+            ->where('id', $pr->branch_id)
+            ->where('company_id', $companyId)
+            ->exists();
+
+        if (!$branchOk) abort(404, 'Not found');
+
+        $allowed = AuthUser::allowedBranchIds($request);
+        if (!in_array($pr->branch_id, $allowed, true)) {
+            abort(403, 'Forbidden (no branch access)');
+        }
+
+        return $pr;
     }
 }

@@ -15,9 +15,15 @@ class SupplierPortalController extends Controller
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['SUPPLIER']);
+        $companyId = AuthUser::companyId($request);
 
-        $pos = PurchaseOrder::where('supplier_id', $u->id)
-            ->orderByDesc('created_at')
+        // Company-safe: join through PO.branch -> branches.company_id
+        $pos = PurchaseOrder::query()
+            ->where('purchase_orders.supplier_id', $u->id)
+            ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
+            ->where('b.company_id', $companyId)
+            ->select('purchase_orders.*')
+            ->orderByDesc('purchase_orders.created_at')
             ->limit(50)
             ->get();
 
@@ -29,10 +35,16 @@ class SupplierPortalController extends Controller
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['SUPPLIER']);
+        $companyId = AuthUser::companyId($request);
 
-        $po = PurchaseOrder::where('id', $id)->firstOrFail();
+        $po = PurchaseOrder::query()
+            ->where('purchase_orders.id', $id)
+            ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
+            ->where('b.company_id', $companyId)
+            ->select('purchase_orders.*')
+            ->firstOrFail();
+
         if ($po->supplier_id !== $u->id) abort(403, 'Forbidden (not your PO)');
-
         if ($po->status !== 'SENT') abort(422, 'PO must be SENT to confirm');
 
         $po->status = 'CONFIRMED';
@@ -57,15 +69,21 @@ class SupplierPortalController extends Controller
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['SUPPLIER']);
+        $companyId = AuthUser::companyId($request);
 
         $data = $request->validate([
             'reason' => 'required|string|max:500',
         ]);
 
-        $po = PurchaseOrder::where('id', $id)->firstOrFail();
-        if ($po->supplier_id !== $u->id) abort(403, 'Forbidden (not your PO)');
+        $po = PurchaseOrder::query()
+            ->where('purchase_orders.id', $id)
+            ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
+            ->where('b.company_id', $companyId)
+            ->select('purchase_orders.*')
+            ->firstOrFail();
 
-        if (!in_array($po->status, ['SENT'], true)) abort(422, 'PO must be SENT to reject');
+        if ($po->supplier_id !== $u->id) abort(403, 'Forbidden (not your PO)');
+        if ($po->status !== 'SENT') abort(422, 'PO must be SENT to reject');
 
         $po->status = 'REJECTED';
         $po->save();
@@ -88,27 +106,35 @@ class SupplierPortalController extends Controller
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['SUPPLIER']);
+        $companyId = AuthUser::requireCompanyContext($request);
 
         $data = $request->validate([
             'note' => 'nullable|string|max:500',
         ]);
 
-        return DB::transaction(function () use ($u, $id, $data) {
+        return DB::transaction(function () use ($u, $companyId, $id, $data) {
 
-            // lock PO to prevent double-posting
-            $po = PurchaseOrder::where('id', $id)
+            $po = PurchaseOrder::query()
+                ->where('purchase_orders.id', $id)
+                ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
+                ->where('b.company_id', $companyId)
+                ->select('purchase_orders.*')
                 ->lockForUpdate()
                 ->firstOrFail();
 
             if ($po->supplier_id !== $u->id) abort(403, 'Forbidden (not your PO)');
             if ($po->status !== 'CONFIRMED') abort(422, 'PO must be CONFIRMED to mark delivered');
 
-            // 1. Mark PO delivered
+            $prev = $po->status;
+
             $po->status = 'DELIVERED';
             $po->delivered_at = now();
             $po->save();
 
-            // 2. Event log
+            if ($prev !== 'DELIVERED') {
+                \App\Jobs\NotifyAccountingPoDelivered::dispatch($po->id)->afterCommit();
+            }
+
             DB::table('purchase_order_events')->insert([
                 'id' => (string) Str::uuid(),
                 'purchase_order_id' => $po->id,
@@ -118,23 +144,6 @@ class SupplierPortalController extends Controller
                 'metadata' => json_encode([]),
                 'created_at' => now(),
             ]);
-
-            // 3. Inventory ledger (THIS is the new logic)
-            $items = DB::table('purchase_order_items')
-                ->where('purchase_order_id', $po->id)
-                ->get();
-
-            foreach ($items as $item) {
-                DB::table('inventory_ledgers')->insert([
-                    'branch_id' => $po->branch_id,
-                    'item_name' => $item->item_name,
-                    'ref_type'  => 'PO',
-                    'ref_id'    => $po->id,
-                    'qty'       => $item->qty,
-                    'direction' => 'IN',
-                    'created_at'=> now(),
-                ]);
-            }
 
             return response()->json($po, 200);
         });

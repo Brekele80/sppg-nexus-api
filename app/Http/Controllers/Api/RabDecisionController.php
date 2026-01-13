@@ -6,15 +6,16 @@ use App\Domain\Rab\RabApprovalService;
 use App\Models\RabVersion;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\AuthUser;
 
 class RabDecisionController extends BaseApiController
 {
     public function store(Request $request, string $id, RabApprovalService $service)
     {
         $u = $this->authUser($request);
-
-        // Must be approver roles
         $this->requireRole($u, ['KA_SPPG', 'ACCOUNTING']);
+
+        $companyId = AuthUser::companyId($request);
 
         $data = $request->validate([
             'decision' => 'required|string|in:APPROVE,REJECT,approve,reject',
@@ -23,11 +24,19 @@ class RabDecisionController extends BaseApiController
 
         $rab = RabVersion::findOrFail($id);
 
+        // Enforce company by joining rab -> pr -> branch
+        $ok = DB::table('purchase_requests as pr')
+            ->join('branches as b', 'b.id', '=', 'pr.branch_id')
+            ->where('pr.id', $rab->purchase_request_id)
+            ->where('b.company_id', $companyId)
+            ->exists();
+
+        if (!$ok) abort(404, 'Not found');
+
         try {
             $updated = $service->decide($rab, $u, $data['decision'], $data['reason'] ?? null);
             return response()->json($updated->load('lineItems'));
         } catch (\Throwable $e) {
-            // Handle unique constraint (double vote) nicely
             if (str_contains($e->getMessage(), 'approval_decisions')) {
                 return response()->json(['message' => 'You have already submitted a decision for this RAB'], 409);
             }
@@ -38,8 +47,17 @@ class RabDecisionController extends BaseApiController
     public function index(Request $request, string $id)
     {
         $this->authUser($request);
+        $companyId = AuthUser::companyId($request);
 
         $rab = RabVersion::findOrFail($id);
+
+        $ok = DB::table('purchase_requests as pr')
+            ->join('branches as b', 'b.id', '=', 'pr.branch_id')
+            ->where('pr.id', $rab->purchase_request_id)
+            ->where('b.company_id', $companyId)
+            ->exists();
+
+        if (!$ok) abort(404, 'Not found');
 
         $decisions = DB::table('approval_decisions')
             ->where('entity_type', 'RAB_VERSION')
