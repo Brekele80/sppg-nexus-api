@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use App\Support\AuthUser;
+use App\Support\Audit;
 
 class RabController extends BaseApiController
 {
@@ -20,7 +21,6 @@ class RabController extends BaseApiController
         $companyId = AuthUser::companyId($request);
         $allowed = AuthUser::allowedBranchIds($request);
 
-        // Company-safe PR load
         $pr = PurchaseRequest::query()
             ->where('purchase_requests.id', $prId)
             ->join('branches as b', 'b.id', '=', 'purchase_requests.branch_id')
@@ -39,7 +39,7 @@ class RabController extends BaseApiController
             'line_items.*.unit_price' => 'required|numeric|min:0',
         ]);
 
-        return DB::transaction(function () use ($u, $pr, $data) {
+        return DB::transaction(function () use ($request, $u, $pr, $data) {
             $maxVer = RabVersion::where('purchase_request_id', $pr->id)->max('version_no') ?? 0;
             $verNo = $maxVer + 1;
             $rabId = (string) Str::uuid();
@@ -57,6 +57,14 @@ class RabController extends BaseApiController
             ]);
 
             $this->replaceLineItems($rab, $data['line_items']);
+
+            Audit::log($request, 'create', 'rab_versions', $rab->id, [
+                'purchase_request_id' => $pr->id,
+                'branch_id' => $pr->branch_id,
+                'version_no' => $verNo,
+                'currency' => $rab->currency,
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
 
             return response()->json($this->loadRab($rabId), 201);
         });
@@ -78,6 +86,7 @@ class RabController extends BaseApiController
         $companyId = AuthUser::companyId($request);
 
         $rab = $this->loadRabGuarded($companyId, $id, $request);
+        $rab->load('lineItems');
 
         if ($rab->status !== 'DRAFT') {
             return response()->json(['message' => 'Only DRAFT RAB can be edited'], 422);
@@ -92,12 +101,36 @@ class RabController extends BaseApiController
             'line_items.*.unit_price' => 'required|numeric|min:0',
         ]);
 
-        return DB::transaction(function () use ($rab, $data) {
+        return DB::transaction(function () use ($request, $rab, $data) {
+            $before = [
+                'currency' => $rab->currency,
+                'subtotal' => (float) $rab->subtotal,
+                'tax' => (float) $rab->tax,
+                'total' => (float) $rab->total,
+                'line_items_count' => $rab->lineItems->count(),
+            ];
+
             if (isset($data['currency'])) {
                 $rab->currency = $data['currency'];
                 $rab->save();
             }
+
             $this->replaceLineItems($rab, $data['line_items']);
+
+            $after = [
+                'currency' => $rab->currency,
+                'subtotal' => (float) $rab->subtotal,
+                'tax' => (float) $rab->tax,
+                'total' => (float) $rab->total,
+                'line_items_count' => count($data['line_items']),
+            ];
+
+            Audit::log($request, 'update', 'rab_versions', $rab->id, [
+                'before' => $before,
+                'after' => $after,
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+
             return response()->json($this->loadRab($rab->id));
         });
     }
@@ -124,14 +157,13 @@ class RabController extends BaseApiController
         $rab->submitted_at = now();
         $rab->save();
 
-        DB::table('audit_logs')->insert([
-            'id' => (string) Str::uuid(),
-            'actor_id' => $u->id,
-            'action' => 'RAB_SUBMITTED',
-            'entity_type' => 'RAB_VERSION',
-            'entity_id' => $rab->id,
-            'metadata' => null,
-            'created_at' => now(),
+        Audit::log($request, 'submit', 'rab_versions', $rab->id, [
+            'from' => 'DRAFT',
+            'to' => 'SUBMITTED',
+            'submitted_at' => (string) $rab->submitted_at,
+            'total' => (float) $rab->total,
+            'currency' => $rab->currency,
+            'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
         ]);
 
         return response()->json($this->loadRab($rab->id));
@@ -150,7 +182,7 @@ class RabController extends BaseApiController
             return response()->json(['message' => 'Only NEEDS_REVISION RAB can be revised'], 422);
         }
 
-        return DB::transaction(function () use ($u, $rab) {
+        return DB::transaction(function () use ($request, $u, $rab) {
             $maxVer = RabVersion::where('purchase_request_id', $rab->purchase_request_id)->max('version_no') ?? 0;
             $newId = (string) Str::uuid();
 
@@ -177,14 +209,11 @@ class RabController extends BaseApiController
 
             $this->replaceLineItems($newRab, $items);
 
-            DB::table('audit_logs')->insert([
-                'id' => (string) Str::uuid(),
-                'actor_id' => $u->id,
-                'action' => 'RAB_REVISION_CREATED',
-                'entity_type' => 'RAB_VERSION',
-                'entity_id' => $newRab->id,
-                'metadata' => json_encode(['from_rab_id' => $rab->id]),
-                'created_at' => now(),
+            Audit::log($request, 'revise', 'rab_versions', $newRab->id, [
+                'from_rab_id' => $rab->id,
+                'purchase_request_id' => $rab->purchase_request_id,
+                'new_version_no' => (int) $newRab->version_no,
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
             ]);
 
             return response()->json($this->loadRab($newRab->id), 201);

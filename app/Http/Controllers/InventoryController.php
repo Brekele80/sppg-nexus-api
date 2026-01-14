@@ -4,18 +4,20 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+
 use App\Support\AuthUser;
+use App\Support\Audit;
+
+use App\Models\InventoryMovement;
+use App\Models\StockAdjustment;
+use App\Models\StockAdjustmentItem;
 
 class InventoryController extends Controller
 {
     /**
      * GET /api/inventory
-     * Dashboard modes:
-     * - Default: branch-level (uses X-Branch-Id or user's branch_id)
-     * - If header X-Dashboard-Scope=COMPANY: aggregate across allowed branches
-     *
-     * FIFO-native:
-     * - source of truth for "on_hand" is inventory_items.on_hand (snapshot)
+     * (Your existing read-only implementation, unchanged)
      */
     public function index(Request $request)
     {
@@ -32,7 +34,6 @@ class InventoryController extends Controller
                 ], 403);
             }
 
-            // 1️⃣ Per-branch snapshots
             $rows = DB::table('inventory_items as ii')
                 ->join('branches as b', 'b.id', '=', 'ii.branch_id')
                 ->where('b.company_id', $companyId)
@@ -40,7 +41,6 @@ class InventoryController extends Controller
                 ->select('ii.item_name', 'ii.unit', 'ii.branch_id', 'ii.on_hand')
                 ->get();
 
-            // 2️⃣ SQL-exact totals
             $totals = DB::table('inventory_items as ii')
                 ->join('branches as b', 'b.id', '=', 'ii.branch_id')
                 ->where('b.company_id', $companyId)
@@ -50,7 +50,6 @@ class InventoryController extends Controller
                 ->get()
                 ->keyBy(fn($r) => $r->item_name.'||'.(string)($r->unit ?? ''));
 
-            // 3️⃣ Merge into dashboard model
             $data = $rows
                 ->groupBy(fn($r) => $r->item_name.'||'.(string)($r->unit ?? ''))
                 ->map(function ($groupRows) use ($totals) {
@@ -76,7 +75,6 @@ class InventoryController extends Controller
             ]);
         }
 
-        // Branch dashboard
         $branchId = AuthUser::requireBranchAccess($request);
 
         return response()->json([
@@ -93,12 +91,7 @@ class InventoryController extends Controller
 
     /**
      * GET /api/inventory/movements
-     * Dashboard modes:
-     * - Default: branch-level movements
-     * - X-Dashboard-Scope=COMPANY: movements across allowed branches
-     *
-     * FIFO-native:
-     * - uses inventory_movements (signed qty)
+     * (Your existing implementation, unchanged)
      */
     public function movements(Request $request)
     {
@@ -119,7 +112,7 @@ class InventoryController extends Controller
                 ->join('branches as b', 'b.id', '=', 'm.branch_id')
                 ->leftJoin('inventory_items as ii', 'ii.id', '=', 'm.inventory_item_id')
                 ->where('b.company_id', $companyId)
-                ->whereIn('m.branch_id', $allowedBranchIds) // ✅ FIX
+                ->whereIn('m.branch_id', $allowedBranchIds)
                 ->orderByDesc('m.created_at')
                 ->limit(200)
                 ->select([
@@ -149,7 +142,6 @@ class InventoryController extends Controller
             ], 200);
         }
 
-        // BRANCH scope
         $branchId = AuthUser::requireBranchAccess($request);
 
         $rows = DB::table('inventory_movements as m')
@@ -167,12 +159,12 @@ class InventoryController extends Controller
                 'ii.unit',
                 DB::raw('b.name as branch_name'),
                 'm.inventory_lot_id',
-                'm.type', // ✅ FIX: was m.direction
+                'm.type',
                 DB::raw("CASE WHEN m.type LIKE '%_IN' THEN 'IN' ELSE 'OUT' END AS direction"),
                 'm.qty',
                 'm.source_type',
                 'm.source_id',
-                'm.note', // ✅ FIX: was m.notes
+                'm.note',
                 'm.actor_id',
                 'm.created_at',
             ])
@@ -186,20 +178,9 @@ class InventoryController extends Controller
         ], 200);
     }
 
-        /**
+    /**
      * GET /api/inventory/lots
-     * Query params (optional):
-     * - q=keyword (matches item_name or lot_code)
-     * - only_available=1 (only lots with remaining_qty > 0)
-     * Dashboard modes:
-     * - Default: branch-level (X-Branch-Id or user's branch_id)
-     * - X-Dashboard-Scope=COMPANY: lots across allowed branches
-     *
-     * FIFO order:
-     * - expiry_date NULLS LAST
-     * - expiry_date ASC
-     * - received_at ASC
-     * - created_at ASC
+     * (Your existing implementation, unchanged)
      */
     public function lots(Request $request)
     {
@@ -225,9 +206,7 @@ class InventoryController extends Controller
                 ->where('b.company_id', $companyId)
                 ->whereIn('l.branch_id', $allowedBranchIds);
 
-            if ($onlyAvailable) {
-                $query->where('l.remaining_qty', '>', 0);
-            }
+            if ($onlyAvailable) $query->where('l.remaining_qty', '>', 0);
 
             if ($q !== '') {
                 $query->where(function ($w) use ($q) {
@@ -254,7 +233,7 @@ class InventoryController extends Controller
                     'l.goods_receipt_item_id',
                     'l.created_at',
                 ])
-                ->orderByRaw('CASE WHEN l.expiry_date IS NULL THEN 1 ELSE 0 END') // nulls last
+                ->orderByRaw('CASE WHEN l.expiry_date IS NULL THEN 1 ELSE 0 END')
                 ->orderBy('l.expiry_date')
                 ->orderBy('l.received_at')
                 ->orderBy('l.created_at')
@@ -270,7 +249,6 @@ class InventoryController extends Controller
             ], 200);
         }
 
-        // BRANCH scope
         $branchId = AuthUser::requireBranchAccess($request);
 
         $query = DB::table('inventory_lots as l')
@@ -279,9 +257,7 @@ class InventoryController extends Controller
             ->where('b.company_id', $companyId)
             ->where('l.branch_id', $branchId);
 
-        if ($onlyAvailable) {
-            $query->where('l.remaining_qty', '>', 0);
-        }
+        if ($onlyAvailable) $query->where('l.remaining_qty', '>', 0);
 
         if ($q !== '') {
             $query->where(function ($w) use ($q) {
@@ -326,7 +302,7 @@ class InventoryController extends Controller
 
     /**
      * GET /api/inventory/items/{itemId}/lots
-     * Same as /inventory/lots but filtered by inventory_item_id.
+     * (Your existing implementation, unchanged)
      */
     public function lotsByItem(Request $request, string $itemId)
     {
@@ -335,7 +311,7 @@ class InventoryController extends Controller
         $scope = strtoupper((string) $request->header('X-Dashboard-Scope', 'BRANCH'));
         if (!in_array($scope, ['BRANCH', 'COMPANY'], true)) $scope = 'BRANCH';
 
-        $onlyAvailable = (string) $request->query('only_available', '1') === '1'; // default true for item drilldown
+        $onlyAvailable = (string) $request->query('only_available', '1') === '1';
 
         if ($scope === 'COMPANY') {
             $allowedBranchIds = AuthUser::allowedBranchIds($request);
@@ -386,7 +362,6 @@ class InventoryController extends Controller
             ], 200);
         }
 
-        // BRANCH scope
         $branchId = AuthUser::requireBranchAccess($request);
 
         $rows = DB::table('inventory_lots as l')
@@ -428,5 +403,189 @@ class InventoryController extends Controller
             'filters' => ['only_available' => $onlyAvailable],
             'data' => $rows,
         ], 200);
+    }
+
+    /**
+     * POST /api/dc/adjustments
+     * Body:
+     * {
+     *   "branch_id": "uuid",
+     *   "type": "INCREASE|DECREASE",
+     *   "notes": "optional",
+     *   "items": [
+     *     {"item_name":"Beras","unit":"kg","qty_delta": 5, "remarks":"optional"}
+     *   ]
+     * }
+     */
+    public function adjust(Request $request)
+    {
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['DC_ADMIN']);
+
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        $data = $request->validate([
+            'branch_id' => 'required|uuid',
+            'type' => 'required|string|in:INCREASE,DECREASE,increase,decrease',
+            'notes' => 'nullable|string|max:2000',
+            'items' => 'required|array|min:1',
+            'items.*.item_name' => 'required|string|max:255',
+            'items.*.unit' => 'nullable|string|max:50',
+            'items.*.qty_delta' => 'required|numeric|min:0.001',
+            'items.*.remarks' => 'nullable|string|max:2000',
+        ]);
+
+        $branchId = (string) $data['branch_id'];
+
+        // 1) Branch must be inside company
+        $branchOk = DB::table('branches')
+            ->where('id', $branchId)
+            ->where('company_id', $companyId)
+            ->exists();
+        if (!$branchOk) {
+            return response()->json(['error'=>['code'=>'branch_invalid','message'=>'Branch not found in company']], 422);
+        }
+
+        // 2) User must have access to this branch
+        $allowed = AuthUser::allowedBranchIds($request);
+        if (!in_array($branchId, $allowed, true)) {
+            return response()->json(['error'=>['code'=>'branch_forbidden','message'=>'No access to this branch']], 403);
+        }
+
+        $type = strtoupper((string) $data['type']);
+        $sign = $type === 'INCREASE' ? 1.0 : -1.0;
+
+        return DB::transaction(function () use ($request, $u, $companyId, $branchId, $type, $sign, $data) {
+
+            // 3) Create adjustment header
+            $adj = StockAdjustment::create([
+                'id' => (string) Str::uuid(),
+                'branch_id' => $branchId,
+                'type' => $type,
+                'status' => 'POSTED',
+                'notes' => $data['notes'] ?? null,
+                'created_by' => $u->id,
+                'posted_at' => now(),
+            ]);
+
+            $linesForAudit = [];
+
+            foreach ($data['items'] as $it) {
+                $itemName = (string) $it['item_name'];
+                $unit     = $it['unit'] ?? null;
+                $deltaAbs = (float) $it['qty_delta'];
+                $deltaSigned = $sign * $deltaAbs;
+
+                // 4) Ensure inventory_items exists
+                // NOTE: This assumes inventory_items has (id uuid, branch_id uuid, item_name, unit, on_hand).
+                $invItem = DB::table('inventory_items')
+                    ->where('branch_id', $branchId)
+                    ->where('item_name', $itemName)
+                    ->where(function ($q) use ($unit) {
+                        if ($unit === null) $q->whereNull('unit');
+                        else $q->where('unit', $unit);
+                    })
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$invItem) {
+                    $invItemId = (string) Str::uuid();
+
+                    DB::table('inventory_items')->insert([
+                        'id' => $invItemId,
+                        'branch_id' => $branchId,
+                        'item_name' => $itemName,
+                        'unit' => $unit,
+                        'on_hand' => 0,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    $invItem = DB::table('inventory_items')
+                        ->where('id', $invItemId)
+                        ->lockForUpdate()
+                        ->first();
+                }
+
+                $beforeOnHand = (float) ($invItem->on_hand ?? 0);
+
+                // 5) Apply snapshot update (no negative protection for DECREASE? we enforce)
+                $afterOnHand = $beforeOnHand + $deltaSigned;
+                if ($afterOnHand < 0) {
+                    return response()->json([
+                        'error' => [
+                            'code' => 'insufficient_stock',
+                            'message' => "Cannot decrease below zero for item: {$itemName}"
+                        ]
+                    ], 409);
+                }
+
+                DB::table('inventory_items')
+                    ->where('id', $invItem->id)
+                    ->update([
+                        'on_hand' => $afterOnHand,
+                        'updated_at' => now(),
+                    ]);
+
+                // 6) Create adjustment item row
+                StockAdjustmentItem::create([
+                    'stock_adjustment_id' => $adj->id,
+                    'item_name' => $itemName,
+                    'unit' => $unit,
+                    'qty_delta' => $deltaSigned, // store signed so it matches movement direction
+                    'remarks' => $it['remarks'] ?? null,
+                ]);
+
+                // 7) Create movement row (signed qty)
+                InventoryMovement::create([
+                    'id' => (string) Str::uuid(),
+                    'branch_id' => $branchId,
+                    'inventory_item_id' => (string) $invItem->id,
+
+                    'type' => 'ADJUSTMENT',
+                    'qty' => $deltaSigned,
+
+                    'inventory_lot_id' => null,
+                    'source_type' => 'ADJUSTMENT',
+                    'source_id' => $adj->id,
+
+                    'ref_type' => 'stock_adjustments',
+                    'ref_id' => $adj->id,
+
+                    'actor_id' => $u->id,
+                    'note' => $type . ' via stock adjustment',
+                ]);
+
+                $linesForAudit[] = [
+                    'inventory_item_id' => (string) $invItem->id,
+                    'item_name' => $itemName,
+                    'unit' => $unit,
+                    'qty_delta' => $deltaSigned,
+                    'on_hand_before' => $beforeOnHand,
+                    'on_hand_after' => $afterOnHand,
+                    'remarks' => $it['remarks'] ?? null,
+                ];
+            }
+
+            // 8) Audit ledger
+            Audit::log($request, 'adjust', 'stock_adjustments', $adj->id, [
+                'branch_id' => $branchId,
+                'type' => $type,
+                'status' => 'POSTED',
+                'notes' => $data['notes'] ?? null,
+                'posted_at' => (string) $adj->posted_at,
+                'lines' => $linesForAudit,
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+
+            return response()->json([
+                'id' => (string) $adj->id,
+                'branch_id' => $branchId,
+                'type' => $type,
+                'status' => 'POSTED',
+                'posted_at' => $adj->posted_at,
+                'items' => $linesForAudit,
+            ], 201);
+        });
     }
 }

@@ -7,6 +7,7 @@ use App\Models\RabVersion;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Support\AuthUser;
+use App\Support\Audit;
 
 class RabDecisionController extends BaseApiController
 {
@@ -24,7 +25,6 @@ class RabDecisionController extends BaseApiController
 
         $rab = RabVersion::findOrFail($id);
 
-        // Enforce company by joining rab -> pr -> branch
         $ok = DB::table('purchase_requests as pr')
             ->join('branches as b', 'b.id', '=', 'pr.branch_id')
             ->where('pr.id', $rab->purchase_request_id)
@@ -33,8 +33,22 @@ class RabDecisionController extends BaseApiController
 
         if (!$ok) abort(404, 'Not found');
 
+        $before = (string) $rab->status;
+
         try {
             $updated = $service->decide($rab, $u, $data['decision'], $data['reason'] ?? null);
+            $updated->refresh();
+
+            if ($before !== (string) $updated->status) {
+                Audit::log($request, 'decision', 'rab_versions', $updated->id, [
+                    'from' => $before,
+                    'to' => (string) $updated->status,
+                    'decision' => strtoupper((string)$data['decision']),
+                    'reason' => $data['reason'] ?? null,
+                    'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+                ]);
+            }
+
             return response()->json($updated->load('lineItems'));
         } catch (\Throwable $e) {
             if (str_contains($e->getMessage(), 'approval_decisions')) {

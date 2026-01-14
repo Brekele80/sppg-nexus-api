@@ -2,321 +2,325 @@
 
 namespace App\Http\Controllers;
 
-use App\Support\AuthUser;
 use App\Models\GoodsReceipt;
 use App\Models\GoodsReceiptItem;
-use App\Models\InventoryMovement;
-use App\Services\InventoryService;
 use App\Models\PurchaseOrder;
-use Illuminate\Database\QueryException;
+use App\Models\PurchaseOrderItem;
+use App\Support\AuthUser;
+use App\Support\Audit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class DcReceiptController extends Controller
 {
-    public function createFromPo(Request $request, string $poId)
+    /**
+     * POST /api/dc/pos/{po}/receipts
+     * Create GR from PO (idempotent via middleware + DB unique if you have it).
+     */
+    public function createFromPo(Request $request, string $po)
     {
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['DC_ADMIN']);
+
         $companyId = AuthUser::requireCompanyContext($request);
-        $branchId  = AuthUser::requireBranchAccess($request);
-
-        if (!Str::isUuid($poId)) {
-            return response()->json([
-                'error' => ['code' => 'invalid_po_id', 'message' => 'Invalid PO id']
-            ], 422);
+        $allowedBranches = AuthUser::allowedBranchIds($request);
+        if (empty($allowedBranches)) {
+            return response()->json(['error'=>['code'=>'no_branch_access','message'=>'No branch access']], 403);
         }
 
-        $po = DB::table('purchase_orders as po')
-            ->join('branches as b', 'b.id', '=', 'po.branch_id')
-            ->where('po.id', $poId)
-            ->where('b.company_id', $companyId)
-            ->select('po.*', 'b.company_id')
-            ->first();
+        return DB::transaction(function () use ($request, $u, $companyId, $allowedBranches, $po) {
 
-        if (!$po) {
-            return response()->json([
-                'error' => ['code' => 'po_not_found', 'message' => 'Purchase order not found']
-            ], 404);
-        }
+            // Company-safe PO load
+            /** @var PurchaseOrder $poModel */
+            $poModel = PurchaseOrder::query()
+                ->where('purchase_orders.id', $po)
+                ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
+                ->where('b.company_id', $companyId)
+                ->select('purchase_orders.*')
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        if ((string) $po->branch_id !== (string) $branchId) {
-            return response()->json([
-                'error' => ['code' => 'branch_mismatch', 'message' => 'PO branch not accessible']
-            ], 403);
-        }
-
-        // If GR already exists -> return it (no 500 ever)
-        $existing = DB::table('goods_receipts')->where('purchase_order_id', $poId)->first();
-        if ($existing) {
-            return response()->json($existing, 200);
-        }
-
-        $authUser = $request->attributes->get('auth_user');
-        $actorId  = $authUser ? (string) $authUser->id : null;
-
-        try {
-            $result = DB::transaction(function () use ($poId, $po, $actorId) {
-                // Double-check inside transaction
-                $existingTx = DB::table('goods_receipts')->where('purchase_order_id', $poId)->first();
-                if ($existingTx) {
-                    return ['created' => false, 'gr' => $existingTx];
-                }
-
-                $grId = (string) Str::uuid();
-                $now  = now();
-                $grNumber = 'GR-' . $now->format('Ymd') . '-' . strtoupper(Str::random(6));
-
-                DB::table('goods_receipts')->insert([
-                    'id'               => $grId,
-                    'branch_id'        => $po->branch_id,
-                    'purchase_order_id'=> $poId,
-                    'gr_number'        => $grNumber,
-                    'status'           => 'DRAFT',
-                    'created_by'       => $actorId,
-                    'created_at'       => $now,
-                    'updated_at'       => $now,
-                ]);
-
-                $items = DB::table('purchase_order_items')
-                    ->where('purchase_order_id', $poId)
-                    ->get();
-
-                foreach ($items as $it) {
-                    DB::table('goods_receipt_items')->insert([
-                        'id'                   => (string) Str::uuid(),
-                        'goods_receipt_id'     => $grId,
-                        'purchase_order_item_id'=> $it->id,
-                        'item_name'            => $it->item_name,
-                        'unit'                 => $it->unit,
-                        'ordered_qty'          => $it->qty,
-                        'received_qty'         => 0,
-                        'rejected_qty'         => 0,
-                        'created_at'           => $now,
-                        'updated_at'           => $now,
-                    ]);
-                }
-
-                $gr = DB::table('goods_receipts')->where('id', $grId)->first();
-                return ['created' => true, 'gr' => $gr];
-            });
-
-            return response()->json($result['gr'], $result['created'] ? 201 : 200);
-
-        } catch (QueryException $e) {
-            // Handle race unique violation gracefully
-            $sqlState = $e->errorInfo[0] ?? null;
-            if ($sqlState === '23505') {
-                $existing = DB::table('goods_receipts')->where('purchase_order_id', $poId)->first();
-                if ($existing) return response()->json($existing, 200);
+            if (!in_array($poModel->branch_id, $allowedBranches, true)) {
+                abort(403, 'Forbidden (no branch access)');
             }
 
-            return response()->json([
-                'error' => ['code' => 'server_error', 'message' => 'Database error']
-            ], 500);
-        }
+            // If GR already exists for PO, return it WITHOUT auditing (avoid double-audit)
+            $existing = GoodsReceipt::where('purchase_order_id', $poModel->id)->first();
+            if ($existing) {
+                return response()->json($this->loadGrGuarded($request, $companyId, $existing->id), 200);
+            }
+
+            // Create GR number
+            $grNumber = 'GR-' . now()->format('Ymd') . '-' . random_int(100000, 999999);
+
+            $grId = (string) Str::uuid();
+
+            $gr = GoodsReceipt::create([
+                'id' => $grId,
+                'branch_id' => $poModel->branch_id,
+                'purchase_order_id' => $poModel->id,
+                'gr_number' => $grNumber,
+                'status' => 'DRAFT',
+                'created_by' => $u->id,
+                'notes' => null,
+                'meta' => null,
+            ]);
+
+            // Copy PO items into GR items
+            $poItems = PurchaseOrderItem::where('purchase_order_id', $poModel->id)->get();
+
+            foreach ($poItems as $poi) {
+                GoodsReceiptItem::create([
+                    'id' => (string) Str::uuid(),
+                    'goods_receipt_id' => $gr->id,
+                    'purchase_order_item_id' => $poi->id,
+                    'item_name' => $poi->item_name,
+                    'unit' => $poi->unit,
+                    'ordered_qty' => $poi->qty,
+                    'received_qty' => 0,
+                    'rejected_qty' => 0,
+                    'note' => null,
+                ]);
+            }
+
+            // Audit: GR created (only when newly created)
+            Audit::log($request, 'create', 'goods_receipts', $gr->id, [
+                'purchase_order_id' => $poModel->id,
+                'branch_id' => $poModel->branch_id,
+                'gr_number' => $grNumber,
+                'items_count' => (int) $poItems->count(),
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+
+            return response()->json($this->loadGrGuarded($request, $companyId, $gr->id), 200);
+        });
     }
 
+    /**
+     * PATCH /api/dc/receipts/{gr}
+     * Update GR line quantities while DRAFT only.
+     */
     public function update(Request $request, string $gr)
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['DC_ADMIN']);
 
         $companyId = AuthUser::requireCompanyContext($request);
-        $allowedBranchIds = AuthUser::allowedBranchIds($request);
-        if (empty($allowedBranchIds)) abort(403, 'No branch access');
 
-        $request->validate([
+        $data = $request->validate([
             'items' => 'required|array|min:1',
             'items.*.id' => 'required|uuid',
             'items.*.received_qty' => 'required|numeric|min:0',
             'items.*.rejected_qty' => 'required|numeric|min:0',
-            'items.*.discrepancy_reason' => 'nullable|string|max:255',
-            'items.*.remarks' => 'nullable|string|max:2000',
         ]);
 
-        $grModel = GoodsReceipt::query()
-            ->with('items')
-            ->where('goods_receipts.id', $gr)
-            ->join('branches as b', 'b.id', '=', 'goods_receipts.branch_id')
-            ->where('b.company_id', $companyId)
-            ->select('goods_receipts.*')
-            ->firstOrFail();
+        return DB::transaction(function () use ($request, $u, $companyId, $gr, $data) {
 
-        if (!in_array($grModel->branch_id, $allowedBranchIds, true)) abort(403, 'Forbidden (no branch access)');
-        if ($grModel->status !== 'DRAFT') {
-            return response()->json(['error' => ['code'=>'gr_not_editable','message'=>'Only DRAFT GR can be updated']], 409);
-        }
+            /** @var GoodsReceipt $grModel */
+            $grModel = GoodsReceipt::query()->lockForUpdate()->findOrFail($gr);
 
-        $map = collect($request->input('items'))->keyBy('id');
+            // Company enforcement via branch join
+            $ok = DB::table('branches')
+                ->where('id', $grModel->branch_id)
+                ->where('company_id', $companyId)
+                ->exists();
+            if (!$ok) abort(404, 'Not found');
 
-        return DB::transaction(function () use ($grModel, $map) {
-            foreach ($grModel->items as $item) {
-                if (!$map->has($item->id)) continue;
-                $payload = $map->get($item->id);
+            // Branch access
+            $allowed = AuthUser::allowedBranchIds($request);
+            if (!in_array($grModel->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
 
-                $received = (float) $payload['received_qty'];
-                $rejected = (float) $payload['rejected_qty'];
-
-                if (($received + $rejected) - (float) $item->ordered_qty > 0.000001) {
-                    return response()->json(['error'=>['code'=>'qty_invalid','message'=>'received+rejected exceeds ordered']], 422);
-                }
-
-                $item->received_qty = $received;
-                $item->rejected_qty = $rejected;
-                $item->discrepancy_reason = $payload['discrepancy_reason'] ?? null;
-                $item->remarks = $payload['remarks'] ?? null;
-                $item->save();
+            if ($grModel->status !== 'DRAFT') {
+                return response()->json(['error'=>['code'=>'gr_not_editable','message'=>'Only DRAFT GR can be updated']], 409);
             }
 
-            return response()->json($grModel->fresh()->load('items'));
+            // Apply updates
+            $items = GoodsReceiptItem::where('goods_receipt_id', $grModel->id)->get()->keyBy('id');
+
+            $changes = [];
+
+            foreach ($data['items'] as $row) {
+                $itemId = (string) $row['id'];
+                if (!isset($items[$itemId])) abort(422, 'Invalid GR item');
+
+                /** @var GoodsReceiptItem $it */
+                $it = $items[$itemId];
+
+                $prev = [
+                    'received_qty' => (float) $it->received_qty,
+                    'rejected_qty' => (float) $it->rejected_qty,
+                ];
+
+                $it->received_qty = (float) $row['received_qty'];
+                $it->rejected_qty = (float) $row['rejected_qty'];
+                $it->save();
+
+                if ($prev['received_qty'] !== (float)$it->received_qty || $prev['rejected_qty'] !== (float)$it->rejected_qty) {
+                    $changes[] = [
+                        'goods_receipt_item_id' => $it->id,
+                        'purchase_order_item_id' => $it->purchase_order_item_id,
+                        'item_name' => $it->item_name,
+                        'unit' => $it->unit,
+                        'ordered_qty' => (float) $it->ordered_qty,
+                        'before' => $prev,
+                        'after' => [
+                            'received_qty' => (float) $it->received_qty,
+                            'rejected_qty' => (float) $it->rejected_qty,
+                        ],
+                    ];
+                }
+            }
+
+            // Audit only if there are changes
+            if (!empty($changes)) {
+                Audit::log($request, 'update', 'goods_receipts', $grModel->id, [
+                    'branch_id' => $grModel->branch_id,
+                    'changes' => $changes,
+                    'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+                ]);
+            }
+
+            return response()->json($this->loadGrGuarded($request, $companyId, $grModel->id), 200);
         });
     }
 
+    /**
+     * POST /api/dc/receipts/{gr}/submit
+     */
     public function submit(Request $request, string $gr)
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['DC_ADMIN']);
 
         $companyId = AuthUser::requireCompanyContext($request);
-        $allowedBranchIds = AuthUser::allowedBranchIds($request);
-        if (empty($allowedBranchIds)) abort(403, 'No branch access');
 
-        $grModel = GoodsReceipt::query()
-            ->with('items')
-            ->where('goods_receipts.id', $gr)
-            ->join('branches as b', 'b.id', '=', 'goods_receipts.branch_id')
-            ->where('b.company_id', $companyId)
-            ->select('goods_receipts.*')
-            ->firstOrFail();
+        return DB::transaction(function () use ($request, $u, $companyId, $gr) {
 
-        if (!in_array($grModel->branch_id, $allowedBranchIds, true)) abort(403, 'Forbidden (no branch access)');
+            /** @var GoodsReceipt $grModel */
+            $grModel = GoodsReceipt::query()->lockForUpdate()->findOrFail($gr);
 
-        if ($grModel->status !== 'DRAFT') {
-            return response()->json(['error'=>['code'=>'gr_invalid_state','message'=>'GR must be DRAFT']], 409);
-        }
+            $ok = DB::table('branches')
+                ->where('id', $grModel->branch_id)
+                ->where('company_id', $companyId)
+                ->exists();
+            if (!$ok) abort(404, 'Not found');
 
-        $any = $grModel->items->sum(fn($i) => (float) $i->received_qty) > 0;
-        if (!$any) {
-            return response()->json(['error'=>['code'=>'gr_empty','message'=>'No received quantities set']], 422);
-        }
+            $allowed = AuthUser::allowedBranchIds($request);
+            if (!in_array($grModel->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
 
-        $grModel->status = 'SUBMITTED';
-        $grModel->submitted_by = $u->id;
-        $grModel->submitted_at = now();
-        $grModel->save();
+            if ($grModel->status !== 'DRAFT') {
+                return response()->json(['error'=>['code'=>'gr_not_submittable','message'=>'Only DRAFT GR can be submitted']], 409);
+            }
 
-        return response()->json($grModel->fresh()->load('items'));
+            $grModel->status = 'SUBMITTED';
+            $grModel->submitted_at = now();
+            $grModel->submitted_by = $u->id;
+            $grModel->save();
+
+            Audit::log($request, 'submit', 'goods_receipts', $grModel->id, [
+                'from' => 'DRAFT',
+                'to' => 'SUBMITTED',
+                'branch_id' => $grModel->branch_id,
+                'submitted_at' => (string) $grModel->submitted_at,
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+
+            return response()->json($this->loadGrGuarded($request, $companyId, $grModel->id), 200);
+        });
     }
 
-    public function receive(Request $request, string $gr, InventoryService $inv)
+    /**
+     * POST /api/dc/receipts/{gr}/receive
+     * This should also be where you post inventory (if your design does it here).
+     */
+    public function receive(Request $request, string $gr)
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['DC_ADMIN']);
 
         $companyId = AuthUser::requireCompanyContext($request);
-        $allowedBranchIds = AuthUser::allowedBranchIds($request);
-        if (empty($allowedBranchIds)) abort(403, 'No branch access');
 
-        return DB::transaction(function () use ($gr, $u, $companyId, $allowedBranchIds, $inv) {
+        return DB::transaction(function () use ($request, $u, $companyId, $gr) {
 
-            $grModel = GoodsReceipt::query()
-                ->with(['items','purchaseOrder','purchaseOrder.items'])
-                ->where('goods_receipts.id', $gr)
-                ->join('branches as b', 'b.id', '=', 'goods_receipts.branch_id')
-                ->where('b.company_id', $companyId)
-                ->select('goods_receipts.*')
-                ->lockForUpdate()
-                ->firstOrFail();
+            /** @var GoodsReceipt $grModel */
+            $grModel = GoodsReceipt::query()->lockForUpdate()->findOrFail($gr);
 
-            if (!in_array($grModel->branch_id, $allowedBranchIds, true)) abort(403, 'Forbidden (no branch access)');
+            $ok = DB::table('branches')
+                ->where('id', $grModel->branch_id)
+                ->where('company_id', $companyId)
+                ->exists();
+            if (!$ok) abort(404, 'Not found');
+
+            $allowed = AuthUser::allowedBranchIds($request);
+            if (!in_array($grModel->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
 
             if ($grModel->status !== 'SUBMITTED') {
-                return response()->json(['error'=>['code'=>'gr_invalid_state','message'=>'GR must be SUBMITTED']], 409);
+                return response()->json(['error'=>['code'=>'gr_not_receivable','message'=>'Only SUBMITTED GR can be received']], 409);
             }
 
-            $po = $grModel->purchaseOrder;
-            $poItems = $po->items->keyBy('id');
+            $items = GoodsReceiptItem::where('goods_receipt_id', $grModel->id)->get();
 
-            // discrepancy detection (optional but useful)
+            // Simple discrepancy rule: if any rejected_qty > 0 OR received != ordered
             $hasDiscrepancy = false;
-            foreach ($grModel->items as $it) {
-                $ordered = (float)$it->ordered_qty;
-                $recv = (float)$it->received_qty;
-                $rej  = (float)$it->rejected_qty;
-                if (($recv + $rej) < $ordered - 0.0001) $hasDiscrepancy = true;
-                if ($rej > 0.0001) $hasDiscrepancy = true;
-            }
-
-            foreach ($grModel->items as $it) {
-                $recv = (float) $it->received_qty;
-                if ($recv <= 0) continue;
-
-                $poItem = $poItems->get($it->purchase_order_item_id);
-                $unitCost = $poItem ? (float) $poItem->unit_price : 0;
-
-                $invItem = $inv->ensureItem($grModel->branch_id, $it->item_name, $it->unit);
-
-                $lot = $inv->receiveIntoLot([
-                    'branch_id' => $grModel->branch_id,
-                    'inventory_item_id' => $invItem->id,
-                    'goods_receipt_id' => $grModel->id,
-                    'goods_receipt_item_id' => $it->id,
-                    'qty' => $recv,
-                    'unit_cost' => $unitCost,
-                    'currency' => $po->currency ?? 'IDR',
-                    'received_at' => now(),
-                ]);
-
-                InventoryMovement::create([
-                    'id' => (string) Str::uuid(),
-                    'branch_id' => $grModel->branch_id,
-                    'inventory_item_id' => $invItem->id,
-                    'inventory_lot_id' => $lot->id,
-
-                    'type' => 'GR_IN',
-                    'qty'  => $recv, // positive IN
-
-                    'source_type' => 'GR',
-                    'source_id'   => $grModel->id,
-
-                    'ref_type' => 'goods_receipts',
-                    'ref_id'   => $grModel->id,
-
-                    'actor_id' => $u->id,
-                    'note' => 'Goods receipt ' . $grModel->gr_number,
-                ]);
+            foreach ($items as $it) {
+                if ((float)$it->rejected_qty > 0) $hasDiscrepancy = true;
+                if ((float)$it->received_qty !== (float)$it->ordered_qty) $hasDiscrepancy = true;
             }
 
             $grModel->status = $hasDiscrepancy ? 'DISCREPANCY' : 'RECEIVED';
-            $grModel->received_by = $u->id;
             $grModel->received_at = now();
+            $grModel->received_by = $u->id;
             $grModel->save();
 
-            return response()->json($grModel->fresh()->load('items'));
+            Audit::log($request, 'receive', 'goods_receipts', $grModel->id, [
+                'from' => 'SUBMITTED',
+                'to' => $grModel->status,
+                'branch_id' => $grModel->branch_id,
+                'received_at' => (string) $grModel->received_at,
+                'has_discrepancy' => $hasDiscrepancy,
+                'lines' => $items->map(fn($it) => [
+                    'goods_receipt_item_id' => (string) $it->id,
+                    'purchase_order_item_id'=> (string) $it->purchase_order_item_id,
+                    'item_name' => (string) $it->item_name,
+                    'unit' => (string) $it->unit,
+                    'ordered_qty' => (float) $it->ordered_qty,
+                    'received_qty'=> (float) $it->received_qty,
+                    'rejected_qty'=> (float) $it->rejected_qty,
+                ])->values()->all(),
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+
+            return response()->json($this->loadGrGuarded($request, $companyId, $grModel->id), 200);
         });
     }
 
+    /**
+     * GET /api/dc/receipts/{gr}
+     */
     public function show(Request $request, string $gr)
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['DC_ADMIN']);
 
         $companyId = AuthUser::requireCompanyContext($request);
-        $allowedBranchIds = AuthUser::allowedBranchIds($request);
-        if (empty($allowedBranchIds)) abort(403, 'No branch access');
 
-        $grModel = GoodsReceipt::query()
-            ->with('items')
-            ->where('goods_receipts.id', $gr)
-            ->join('branches as b', 'b.id', '=', 'goods_receipts.branch_id')
-            ->where('b.company_id', $companyId)
-            ->select('goods_receipts.*')
-            ->firstOrFail();
+        return response()->json($this->loadGrGuarded($request, $companyId, $gr), 200);
+    }
 
-        if (!in_array($grModel->branch_id, $allowedBranchIds, true)) {
-            abort(403, 'Forbidden (no branch access)');
-        }
+    private function loadGrGuarded(Request $request, string $companyId, string $id)
+    {
+        $gr = GoodsReceipt::with(['items'])->findOrFail($id);
 
-        return response()->json($grModel);
+        $ok = DB::table('branches')
+            ->where('id', $gr->branch_id)
+            ->where('company_id', $companyId)
+            ->exists();
+        if (!$ok) abort(404, 'Not found');
+
+        $allowed = AuthUser::allowedBranchIds($request);
+        if (!in_array($gr->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
+
+        return $gr;
     }
 }

@@ -58,7 +58,7 @@ class RabApprovalService
                 $rab->decision_reason = null;
                 $rab->save();
 
-                $this->audit($actor->id, 'RAB_APPROVED', 'RAB_VERSION', $rab->id, []);
+                $this->audit($actor, 'RAB_APPROVED', 'rab_versions', $rab->id, []);
                 return $rab;
             }
 
@@ -75,7 +75,7 @@ class RabApprovalService
                 $rab->decision_reason = $reason;
                 $rab->save();
 
-                $this->audit($actor->id, 'RAB_NEEDS_REVISION', 'RAB_VERSION', $rab->id, ['reason' => $reason]);
+                $this->audit($actor, 'RAB_NEEDS_REVISION', 'rab_versions', $rab->id, ['reason' => $reason]);
             }
 
             return $rab;
@@ -95,15 +95,16 @@ class RabApprovalService
         return null;
     }
 
-    private function audit(string $actorId, string $action, string $entityType, string $entityId, array $metadata): void
+    private function audit(Profile $actor, string $action, string $entity, string $entityId, array $payload): void
     {
-        DB::table('audit_logs')->insert([
-            'id' => (string) Str::uuid(),
-            'actor_id' => $actorId,
-            'action' => $action,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'metadata' => empty($metadata) ? null : json_encode($metadata),
+        DB::table('audit_ledger')->insert([
+            'id'         => (string) Str::uuid(),
+            'company_id' => (string) $actor->company_id,
+            'actor_id'   => (string) $actor->id,
+            'action'     => $action,
+            'entity'     => $entity,          // e.g. 'rab_versions'
+            'entity_id'  => $entityId,
+            'payload'    => $payload,         // jsonb in postgres; array is fine
             'created_at' => now(),
         ]);
     }

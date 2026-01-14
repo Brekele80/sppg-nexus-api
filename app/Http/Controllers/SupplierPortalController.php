@@ -7,17 +7,16 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use App\Support\AuthUser;
+use App\Support\Audit;
 
 class SupplierPortalController extends Controller
 {
-    // GET /api/supplier/pos
     public function myPurchaseOrders(Request $request)
     {
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['SUPPLIER']);
         $companyId = AuthUser::companyId($request);
 
-        // Company-safe: join through PO.branch -> branches.company_id
         $pos = PurchaseOrder::query()
             ->where('purchase_orders.supplier_id', $u->id)
             ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
@@ -30,7 +29,6 @@ class SupplierPortalController extends Controller
         return response()->json($pos, 200);
     }
 
-    // POST /api/supplier/pos/{id}/confirm
     public function confirm(Request $request, string $id)
     {
         $u = AuthUser::get($request);
@@ -47,6 +45,8 @@ class SupplierPortalController extends Controller
         if ($po->supplier_id !== $u->id) abort(403, 'Forbidden (not your PO)');
         if ($po->status !== 'SENT') abort(422, 'PO must be SENT to confirm');
 
+        $prev = $po->status;
+
         $po->status = 'CONFIRMED';
         $po->confirmed_at = now();
         $po->save();
@@ -61,10 +61,18 @@ class SupplierPortalController extends Controller
             'created_at' => now(),
         ]);
 
+        if ($prev !== $po->status) {
+            Audit::log($request, 'confirm', 'purchase_orders', $po->id, [
+                'from' => $prev,
+                'to' => $po->status,
+                'confirmed_at' => (string) $po->confirmed_at,
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+        }
+
         return response()->json($po, 200);
     }
 
-    // POST /api/supplier/pos/{id}/reject
     public function reject(Request $request, string $id)
     {
         $u = AuthUser::get($request);
@@ -85,7 +93,12 @@ class SupplierPortalController extends Controller
         if ($po->supplier_id !== $u->id) abort(403, 'Forbidden (not your PO)');
         if ($po->status !== 'SENT') abort(422, 'PO must be SENT to reject');
 
+        $prev = $po->status;
+
         $po->status = 'REJECTED';
+        $po->rejected_at = now();
+        $po->rejected_by = $u->id;
+        $po->rejection_reason = $data['reason'];
         $po->save();
 
         DB::table('purchase_order_events')->insert([
@@ -98,10 +111,18 @@ class SupplierPortalController extends Controller
             'created_at' => now(),
         ]);
 
+        if ($prev !== $po->status) {
+            Audit::log($request, 'reject', 'purchase_orders', $po->id, [
+                'from' => $prev,
+                'to' => $po->status,
+                'reason' => $data['reason'],
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+        }
+
         return response()->json($po, 200);
     }
 
-    // POST /api/supplier/pos/{id}/delivered
     public function markDelivered(Request $request, string $id)
     {
         $u = AuthUser::get($request);
@@ -112,7 +133,7 @@ class SupplierPortalController extends Controller
             'note' => 'nullable|string|max:500',
         ]);
 
-        return DB::transaction(function () use ($u, $companyId, $id, $data) {
+        return DB::transaction(function () use ($request, $u, $companyId, $id, $data) {
 
             $po = PurchaseOrder::query()
                 ->where('purchase_orders.id', $id)
@@ -144,6 +165,16 @@ class SupplierPortalController extends Controller
                 'metadata' => json_encode([]),
                 'created_at' => now(),
             ]);
+
+            if ($prev !== $po->status) {
+                Audit::log($request, 'delivered', 'purchase_orders', $po->id, [
+                    'from' => $prev,
+                    'to' => $po->status,
+                    'delivered_at' => (string) $po->delivered_at,
+                    'note' => $data['note'] ?? null,
+                    'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+                ]);
+            }
 
             return response()->json($po, 200);
         });

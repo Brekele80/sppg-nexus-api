@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use App\Support\AuthUser;
+use App\Support\Audit;
 
 class PurchaseRequestController extends BaseApiController
 {
@@ -28,7 +29,6 @@ class PurchaseRequestController extends BaseApiController
             'items.*.remarks' => 'nullable|string',
         ]);
 
-        // Branch must be inside company
         $branchOk = DB::table('branches')
             ->where('id', $data['branch_id'])
             ->where('company_id', $companyId)
@@ -40,7 +40,6 @@ class PurchaseRequestController extends BaseApiController
             ], 422);
         }
 
-        // User must have access to this branch (unless company-wide role)
         $allowed = AuthUser::allowedBranchIds($request);
         if (!in_array($data['branch_id'], $allowed, true)) {
             return response()->json([
@@ -69,6 +68,18 @@ class PurchaseRequestController extends BaseApiController
                     'remarks' => $it['remarks'] ?? null,
                 ]);
             }
+
+            Audit::log($request, 'create', 'purchase_requests', $prId, [
+                'branch_id' => $data['branch_id'],
+                'notes' => $data['notes'] ?? null,
+                'items' => array_map(fn($it) => [
+                    'item_name' => $it['item_name'],
+                    'unit' => $it['unit'],
+                    'qty' => (float) $it['qty'],
+                    'remarks' => $it['remarks'] ?? null,
+                ], $data['items']),
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
 
             return response()->json($this->loadPrGuarded($request, $companyId, $prId), 201);
         });
@@ -117,16 +128,15 @@ class PurchaseRequestController extends BaseApiController
         }
 
         $pr->status = 'SUBMITTED';
+        $pr->submitted_at = now();
         $pr->save();
 
-        DB::table('audit_logs')->insert([
-            'id' => (string) Str::uuid(),
-            'actor_id' => $u->id,
-            'action' => 'PR_SUBMITTED',
-            'entity_type' => 'PURCHASE_REQUEST',
-            'entity_id' => $pr->id,
-            'metadata' => null,
-            'created_at' => now(),
+        Audit::log($request, 'submit', 'purchase_requests', $pr->id, [
+            'from' => 'DRAFT',
+            'to' => 'SUBMITTED',
+            'branch_id' => $pr->branch_id,
+            'submitted_at' => (string) $pr->submitted_at,
+            'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
         ]);
 
         return response()->json($this->loadPrGuarded($request, $companyId, $id), 200);

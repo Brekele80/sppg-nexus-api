@@ -1,24 +1,27 @@
 <?php
 
-namespace App\Http;
+namespace App\Console;
 
-use Illuminate\Foundation\Http\Kernel as HttpKernel;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 
-class Kernel extends HttpKernel
+class Kernel extends ConsoleKernel
 {
-    protected $middlewareGroups = [
-        'api' => [
-            \App\Http\Middleware\ForceJsonResponse::class,
+    /**
+     * Define the application's command schedule.
+     */
+    protected function schedule(Schedule $schedule): void
+    {
+        // $schedule->command('inspire')->hourly();
+    }
 
-            'throttle:api',
-            \Illuminate\Routing\Middleware\SubstituteBindings::class,
-        ],
-    ];
+    /**
+     * Register the commands for the application.
+     */
+    protected function commands(): void
+    {
+        $this->load(__DIR__.'/Commands');
 
-    protected $routeMiddleware = [
-        'supabase'       => \App\Http\Middleware\VerifySupabaseJwt::class,
-        'requireCompany' => \App\Http\Middleware\RequireCompanyContext::class,
-        'idempotency'    => \App\Http\Middleware\IdempotencyMiddleware::class,
-        'requireRole'    => \App\Http\Middleware\RequireRole::class,
-    ];
+        require base_path('routes/console.php');
+    }
 }

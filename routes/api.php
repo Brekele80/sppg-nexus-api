@@ -17,6 +17,7 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\AccountingPurchaseOrderPaymentController;
 use App\Http\Controllers\SupplierPurchaseOrderPaymentController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\AuditController;
 
 /*
 |--------------------------------------------------------------------------
@@ -45,6 +46,12 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     Route::get('/suppliers', [SupplierController::class, 'index']);
     Route::get('/notifications', [NotificationController::class, 'index']);
 
+    // Read-only audit (admin roles only)
+    Route::middleware(['requireRole:ACCOUNTING,KA_SPPG,DC_ADMIN'])->group(function () {
+        Route::get('/audit', [AuditController::class, 'index']);
+    });
+
+    // Inventory reads
     Route::get('/inventory', [InventoryController::class, 'index']);
     Route::get('/inventory/movements', [InventoryController::class, 'movements']);
     Route::get('/inventory/lots', [InventoryController::class, 'lots']);
@@ -97,6 +104,9 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('pos/{id}/confirm', [SupplierPortalController::class, 'confirm'])->whereUuid('id');
             Route::post('pos/{id}/reject', [SupplierPortalController::class, 'reject'])->whereUuid('id');
             Route::post('pos/{id}/delivered', [SupplierPortalController::class, 'markDelivered'])->whereUuid('id');
+
+            // Supplier reads (kept inside supplier prefix for consistency)
+            Route::get('pos', [SupplierPortalController::class, 'myPurchaseOrders']);
         });
 
         // ===== DC ADMIN
@@ -116,12 +126,6 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     // DC read
     Route::middleware(['requireRole:DC_ADMIN'])->prefix('dc')->group(function () {
         Route::get('/receipts/{gr}', [DcReceiptController::class, 'show'])->whereUuid('gr');
-    });
-
-    // Supplier read
-    Route::middleware(['requireRole:SUPPLIER'])->group(function () {
-        Route::get('/supplier/profile', [SupplierPortalController::class, 'index']);
-        Route::get('/supplier/pos', [SupplierPortalController::class, 'myPurchaseOrders']);
     });
 
     // Purchase reads

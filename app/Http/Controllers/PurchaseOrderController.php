@@ -8,10 +8,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use App\Support\AuthUser;
+use App\Support\Audit;
 
 class PurchaseOrderController extends Controller
 {
-    // POST /api/rabs/{rabId}/po
     public function createFromApprovedRab(Request $request, string $rabId)
     {
         $u = AuthUser::get($request);
@@ -28,9 +28,8 @@ class PurchaseOrderController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        return DB::transaction(function () use ($u, $companyId, $allowedBranchIds, $rabId, $data) {
+        return DB::transaction(function () use ($request, $u, $companyId, $allowedBranchIds, $rabId, $data) {
 
-            // 1) Load RAB (and PR) with company enforcement through branches
             $rab = DB::table('rab_versions as rv')
                 ->join('purchase_requests as pr', 'pr.id', '=', 'rv.purchase_request_id')
                 ->join('branches as b', 'b.id', '=', 'pr.branch_id')
@@ -42,12 +41,10 @@ class PurchaseOrderController extends Controller
             if (!$rab) abort(404, 'RAB not found');
             if ($rab->status !== 'APPROVED') abort(422, 'RAB must be APPROVED to create PO');
 
-            // 2) Enforce branch access to that PR branch
             if (!in_array($rab->pr_branch_id, $allowedBranchIds, true)) {
                 abort(403, 'Forbidden (no branch access)');
             }
 
-            // 3) Supplier must be SUPPLIER role AND in same company
             $supplierOk = DB::table('profiles as p')
                 ->join('user_roles as ur', 'ur.user_id', '=', 'p.id')
                 ->join('roles as r', 'r.id', '=', 'ur.role_id')
@@ -58,13 +55,12 @@ class PurchaseOrderController extends Controller
 
             if (!$supplierOk) abort(422, 'supplier_id must be a SUPPLIER in this company');
 
-            // 4) Prevent duplicate PO for same approved rab
             $existing = PurchaseOrder::where('rab_version_id', $rabId)->first();
             if ($existing) {
+                // Return existing, DO NOT audit create
                 return response()->json($existing->load('items'), 200);
             }
 
-            // 5) Create PO number
             $poNumber = 'PO-' . now()->format('Ymd') . '-' . strtoupper(Str::random(6));
 
             $po = PurchaseOrder::create([
@@ -82,7 +78,6 @@ class PurchaseOrderController extends Controller
                 'notes' => $data['notes'] ?? null,
             ]);
 
-            // 6) Copy line items from RAB to PO
             $lines = DB::table('rab_line_items')->where('rab_version_id', $rabId)->get();
             foreach ($lines as $ln) {
                 PurchaseOrderItem::create([
@@ -95,14 +90,24 @@ class PurchaseOrderController extends Controller
                 ]);
             }
 
-            // 7) Notify supplier AFTER commit
             \App\Jobs\NotifySupplierNewPo::dispatch($po->id)->afterCommit();
+
+            Audit::log($request, 'create', 'purchase_orders', $po->id, [
+                'branch_id' => $po->branch_id,
+                'purchase_request_id' => $po->purchase_request_id,
+                'rab_version_id' => $po->rab_version_id,
+                'supplier_id' => $po->supplier_id,
+                'po_number' => $po->po_number,
+                'total' => (float) $po->total,
+                'currency' => $po->currency,
+                'items_count' => (int) $lines->count(),
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
 
             return response()->json($po->load('items'), 201);
         });
     }
 
-    // POST /api/pos/{id}/send
     public function sendToSupplier(Request $request, string $id)
     {
         $u = AuthUser::get($request);
@@ -112,7 +117,6 @@ class PurchaseOrderController extends Controller
         $allowedBranchIds = AuthUser::allowedBranchIds($request);
         if (empty($allowedBranchIds)) abort(403, 'No branch access');
 
-        // Enforce company by branch join
         $po = PurchaseOrder::query()
             ->where('purchase_orders.id', $id)
             ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
@@ -122,6 +126,8 @@ class PurchaseOrderController extends Controller
 
         if (!in_array($po->branch_id, $allowedBranchIds, true)) abort(403, 'Forbidden (no branch access)');
         if ($po->status !== 'DRAFT') abort(422, 'PO must be DRAFT');
+
+        $prev = $po->status;
 
         $po->status = 'SENT';
         $po->sent_at = now();
@@ -137,16 +143,24 @@ class PurchaseOrderController extends Controller
             'created_at' => now(),
         ]);
 
+        if ($prev !== $po->status) {
+            Audit::log($request, 'send', 'purchase_orders', $po->id, [
+                'from' => $prev,
+                'to' => $po->status,
+                'sent_at' => (string) $po->sent_at,
+                'supplier_id' => $po->supplier_id,
+                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            ]);
+        }
+
         return response()->json($po->load('items'), 200);
     }
 
-    // GET /api/pos/{id}
     public function show(Request $request, string $id)
     {
         $u = AuthUser::get($request);
         $companyId = AuthUser::companyId($request);
 
-        // Load PO with company enforcement
         $po = PurchaseOrder::query()
             ->where('purchase_orders.id', $id)
             ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
@@ -165,11 +179,9 @@ class PurchaseOrderController extends Controller
         }
 
         if ($isAccounting) {
-            // Company-wide, but still company-scoped (already enforced by join)
             return response()->json($po->load('items'), 200);
         }
 
-        // Branch-scoped roles must have access to PO branch
         $allowedBranchIds = AuthUser::allowedBranchIds($request);
         if (empty($allowedBranchIds) || !in_array($po->branch_id, $allowedBranchIds, true)) {
             abort(403, 'Forbidden (no branch access)');
