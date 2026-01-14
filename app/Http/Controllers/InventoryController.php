@@ -119,22 +119,23 @@ class InventoryController extends Controller
                 ->join('branches as b', 'b.id', '=', 'm.branch_id')
                 ->leftJoin('inventory_items as ii', 'ii.id', '=', 'm.inventory_item_id')
                 ->where('b.company_id', $companyId)
-                ->whereIn('m.branch_id', $allowedBranchIds)
+                ->whereIn('m.branch_id', $allowedBranchIds) // ✅ FIX
                 ->orderByDesc('m.created_at')
                 ->limit(200)
                 ->select([
                     'm.id',
                     'm.branch_id',
-                    'b.name as branch_name', // keep only if column exists
                     'm.inventory_item_id',
                     'ii.item_name',
                     'ii.unit',
+                    DB::raw('b.name as branch_name'),
                     'm.inventory_lot_id',
-                    'm.direction',
+                    'm.type',
+                    DB::raw("CASE WHEN m.type LIKE '%_IN' THEN 'IN' ELSE 'OUT' END AS direction"),
                     'm.qty',
                     'm.source_type',
                     'm.source_id',
-                    'm.notes',
+                    'm.note',
                     'm.actor_id',
                     'm.created_at',
                 ])
@@ -148,7 +149,7 @@ class InventoryController extends Controller
             ], 200);
         }
 
-        // Default BRANCH scope
+        // BRANCH scope
         $branchId = AuthUser::requireBranchAccess($request);
 
         $rows = DB::table('inventory_movements as m')
@@ -164,13 +165,14 @@ class InventoryController extends Controller
                 'm.inventory_item_id',
                 'ii.item_name',
                 'ii.unit',
-                'b.name as branch_name',
+                DB::raw('b.name as branch_name'),
                 'm.inventory_lot_id',
-                'm.direction',
+                'm.type', // ✅ FIX: was m.direction
+                DB::raw("CASE WHEN m.type LIKE '%_IN' THEN 'IN' ELSE 'OUT' END AS direction"),
                 'm.qty',
                 'm.source_type',
                 'm.source_id',
-                'm.notes',
+                'm.note', // ✅ FIX: was m.notes
                 'm.actor_id',
                 'm.created_at',
             ])

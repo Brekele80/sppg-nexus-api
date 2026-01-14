@@ -16,7 +16,6 @@ use App\Http\Controllers\InventoryController;
 
 use App\Http\Controllers\AccountingPurchaseOrderPaymentController;
 use App\Http\Controllers\SupplierPurchaseOrderPaymentController;
-
 use App\Http\Controllers\NotificationController;
 
 /*
@@ -28,9 +27,7 @@ Route::get('/health', fn () => response()->json(['ok' => true, 'app' => 'SPPG Ne
 
 /*
 |--------------------------------------------------------------------------
-| Authenticated (Supabase JWT) - no company header required
-|--------------------------------------------------------------------------
-| /me should work without X-Company-Id so clients can discover company_id first.
+| Authenticated only (NO company header)
 |--------------------------------------------------------------------------
 */
 Route::middleware(['supabase'])->group(function () {
@@ -39,157 +36,99 @@ Route::middleware(['supabase'])->group(function () {
 
 /*
 |--------------------------------------------------------------------------
-| Authenticated + Company Scoped (Strong tenant isolation)
-|--------------------------------------------------------------------------
-| Requires X-Company-Id and must match auth_user.company_id
+| Authenticated + Company Scoped (TENANT SAFE ZONE)
 |--------------------------------------------------------------------------
 */
 Route::middleware(['supabase', 'requireCompany'])->group(function () {
 
-    // ===== Basic
+    // ---------------- READ ----------------
     Route::get('/suppliers', [SupplierController::class, 'index']);
-
-    // ===== Notifications (minimal inbox)
     Route::get('/notifications', [NotificationController::class, 'index']);
-    Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->middleware('idempotency');
-    Route::post('/notifications/read-all', [\App\Http\Controllers\NotificationController::class, 'markAllRead'])->middleware('idempotency');
 
-    // ===== Inventory (read)
     Route::get('/inventory', [InventoryController::class, 'index']);
     Route::get('/inventory/movements', [InventoryController::class, 'movements']);
-
-    // Lots (FIFO visibility)
     Route::get('/inventory/lots', [InventoryController::class, 'lots']);
     Route::get('/inventory/items/{itemId}/lots', [InventoryController::class, 'lotsByItem']);
 
-    /*
-    |--------------------------------------------------------------------------
-    | Accounting: payment workflow (minimal)
-    |--------------------------------------------------------------------------
-    */
-    Route::middleware(['requireRole:ACCOUNTING'])->prefix('accounting')->group(function () {
-        Route::get('purchase-orders/payables', [AccountingPurchaseOrderPaymentController::class, 'payables']);
-        Route::post('purchase-orders/{id}/payment-proof', [AccountingPurchaseOrderPaymentController::class, 'uploadProof'])
-            ->middleware('idempotency');
-    });
-
-    /*
-    |--------------------------------------------------------------------------
-    | Supplier: confirm payment
-    |--------------------------------------------------------------------------
-    */
-    Route::middleware(['requireRole:SUPPLIER'])->prefix('supplier')->group(function () {
-        Route::post('purchase-orders/{id}/confirm-payment', [SupplierPurchaseOrderPaymentController::class, 'confirmPayment'])
-            ->middleware('idempotency');
-    });
-
-    /*
-    |--------------------------------------------------------------------------
-    | Read PO (CHEF + ACCOUNTING + DC_ADMIN)
-    |--------------------------------------------------------------------------
-    */
+    // Read PO
     Route::middleware(['requireRole:CHEF,ACCOUNTING,DC_ADMIN'])->group(function () {
-        Route::get('/pos/{id}', [PurchaseOrderController::class, 'show']);
+        Route::get('/pos/{id}', [PurchaseOrderController::class, 'show'])->whereUuid('id');
     });
 
-    /*
-    |-------------------------------------------------------------------------- 
-    | CHEF: PR only
-    |-------------------------------------------------------------------------- 
-    */
-    Route::middleware(['requireRole:CHEF'])->group(function () {
+    // ---------------- IDEMPOTENT MUTATION ZONE ----------------
+    Route::middleware(['idempotency'])->group(function () {
 
-        // PR
-        Route::post('/prs', [PurchaseRequestController::class, 'store']);
-        Route::get('/prs', [PurchaseRequestController::class, 'index']);
-        Route::get('/prs/{id}', [PurchaseRequestController::class, 'show']);
-        Route::post('/prs/{id}/submit', [PurchaseRequestController::class, 'submit'])
-            ->middleware('idempotency');
+        // ===== Notifications
+        Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->whereUuid('id');
+        Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+
+        // ===== CHEF
+        Route::middleware(['requireRole:CHEF'])->group(function () {
+            Route::post('/prs', [PurchaseRequestController::class, 'store']);
+            Route::post('/prs/{id}/submit', [PurchaseRequestController::class, 'submit'])->whereUuid('id');
+
+            Route::post('/kitchen/issues', [KitchenIssueController::class, 'create']);
+            Route::post('/kitchen/issues/{id}/submit', [KitchenIssueController::class, 'submit'])->whereUuid('id');
+        });
+
+        // ===== PURCHASE
+        Route::middleware(['requireRole:PURCHASE_CABANG'])->group(function () {
+            Route::post('/prs/{id}/rabs', [RabController::class, 'createForPr'])->whereUuid('id');
+            Route::post('/rabs/{id}/submit', [RabController::class, 'submit'])->whereUuid('id');
+            Route::post('/rabs/{id}/revise', [RabController::class, 'revise'])->whereUuid('id');
+
+            Route::post('/rabs/{rabId}/po', [PurchaseOrderController::class, 'createFromApprovedRab'])->whereUuid('rabId');
+            Route::post('/pos/{id}/send', [PurchaseOrderController::class, 'sendToSupplier'])->whereUuid('id');
+        });
+
+        // ===== DECISIONS
+        Route::middleware(['requireRole:KA_SPPG,ACCOUNTING,DC_ADMIN'])->group(function () {
+            Route::post('/rabs/{id}/decisions', [RabDecisionController::class, 'store'])->whereUuid('id');
+        });
+
+        // ===== ACCOUNTING
+        Route::middleware(['requireRole:ACCOUNTING'])->prefix('accounting')->group(function () {
+            Route::post('purchase-orders/{id}/payment-proof', [AccountingPurchaseOrderPaymentController::class, 'uploadProof'])->whereUuid('id');
+        });
+
+        // ===== SUPPLIER
+        Route::middleware(['requireRole:SUPPLIER'])->prefix('supplier')->group(function () {
+            Route::post('purchase-orders/{id}/confirm-payment', [SupplierPurchaseOrderPaymentController::class, 'confirmPayment'])->whereUuid('id');
+            Route::post('pos/{id}/confirm', [SupplierPortalController::class, 'confirm'])->whereUuid('id');
+            Route::post('pos/{id}/reject', [SupplierPortalController::class, 'reject'])->whereUuid('id');
+            Route::post('pos/{id}/delivered', [SupplierPortalController::class, 'markDelivered'])->whereUuid('id');
+        });
+
+        // ===== DC ADMIN
+        Route::middleware(['requireRole:DC_ADMIN'])->prefix('dc')->group(function () {
+            Route::post('/pos/{po}/receipts', [DcReceiptController::class, 'createFromPo'])->whereUuid('po');
+            Route::patch('/receipts/{gr}', [DcReceiptController::class, 'update'])->whereUuid('gr');
+            Route::post('/receipts/{gr}/submit', [DcReceiptController::class, 'submit'])->whereUuid('gr');
+            Route::post('/receipts/{gr}/receive', [DcReceiptController::class, 'receive'])->whereUuid('gr');
+
+            Route::post('/issues/{id}/approve', [KitchenIssueController::class, 'approve'])->whereUuid('id');
+            Route::post('/issues/{id}/issue', [KitchenIssueController::class, 'issue'])->whereUuid('id');
+
+            Route::post('/adjustments', [InventoryController::class, 'adjust']);
+        });
     });
 
-    /*
-    |-------------------------------------------------------------------------- 
-    | PURCHASE: RAB + PO creation/sending
-    |-------------------------------------------------------------------------- 
-    */
-    Route::middleware(['requireRole:PURCHASE_CABANG'])->group(function () {
-
-        // RAB
-        Route::post('/prs/{id}/rabs', [RabController::class, 'createForPr']);
-        Route::get('/rabs/{id}', [RabController::class, 'show']);
-        Route::put('/rabs/{id}', [RabController::class, 'updateDraft']);
-        Route::post('/rabs/{id}/submit', [RabController::class, 'submit'])
-            ->middleware('idempotency');
-        Route::post('/rabs/{id}/revise', [RabController::class, 'revise']);
-
-        // PO
-        Route::post('/rabs/{rabId}/po', [PurchaseOrderController::class, 'createFromApprovedRab']);
-        Route::post('/pos/{id}/send', [PurchaseOrderController::class, 'sendToSupplier'])
-            ->middleware('idempotency');
+    // DC read
+    Route::middleware(['requireRole:DC_ADMIN'])->prefix('dc')->group(function () {
+        Route::get('/receipts/{gr}', [DcReceiptController::class, 'show'])->whereUuid('gr');
     });
 
-    /*
-    |--------------------------------------------------------------------------
-    | Approvers for decisions
-    |--------------------------------------------------------------------------
-    */
-    Route::middleware(['requireRole:KA_SPPG,ACCOUNTING,DC_ADMIN'])->group(function () {
-        Route::post('/rabs/{id}/decisions', [RabDecisionController::class, 'store'])
-            ->middleware('idempotency');
-    });
-
-    /*
-    |--------------------------------------------------------------------------
-    | Supplier Portal (SUPPLIER only)
-    |--------------------------------------------------------------------------
-    */
+    // Supplier read
     Route::middleware(['requireRole:SUPPLIER'])->group(function () {
         Route::get('/supplier/profile', [SupplierPortalController::class, 'index']);
         Route::get('/supplier/pos', [SupplierPortalController::class, 'myPurchaseOrders']);
-
-        Route::post('/supplier/pos/{id}/confirm', [SupplierPortalController::class, 'confirm'])
-            ->middleware('idempotency');
-        Route::post('/supplier/pos/{id}/reject', [SupplierPortalController::class, 'reject'])
-            ->middleware('idempotency');
-        Route::post('/supplier/pos/{id}/delivered', [SupplierPortalController::class, 'markDelivered'])
-            ->middleware('idempotency');
     });
 
-    /*
-    |--------------------------------------------------------------------------
-    | Kitchen Issue Requests (CHEF)
-    |--------------------------------------------------------------------------
-    */
-    Route::middleware(['requireRole:CHEF'])->group(function () {
-        Route::post('/kitchen/issues', [KitchenIssueController::class, 'create']);
-        Route::post('/kitchen/issues/{id}/submit', [KitchenIssueController::class, 'submit'])
-            ->middleware('idempotency');
-    });
-
-    /*
-    |--------------------------------------------------------------------------
-    | DC-only actions
-    |--------------------------------------------------------------------------
-    */
-    Route::middleware(['requireRole:DC_ADMIN'])->prefix('dc')->group(function () {
-
-        // Goods Receipt
-        Route::post('/pos/{po}/receipts', [DcReceiptController::class, 'createFromPo']);
-        Route::patch('/receipts/{gr}', [DcReceiptController::class, 'update']);
-        Route::post('/receipts/{gr}/submit', [DcReceiptController::class, 'submit'])
-            ->middleware('idempotency');
-        Route::post('/receipts/{gr}/receive', [DcReceiptController::class, 'receive'])
-            ->middleware('idempotency');
-        Route::get('/receipts/{gr}', [DcReceiptController::class, 'show']);
-
-        // DC issue flow
-        Route::post('/issues/{id}/approve', [KitchenIssueController::class, 'approve'])
-            ->middleware('idempotency');
-        Route::post('/issues/{id}/issue', [KitchenIssueController::class, 'issue'])
-            ->middleware('idempotency');
-
-        // Adjustments
-        Route::post('/adjustments', [InventoryController::class, 'adjust'])
-            ->middleware('idempotency');
+    // Purchase reads
+    Route::middleware(['requireRole:PURCHASE_CABANG'])->group(function () {
+        Route::get('/prs', [PurchaseRequestController::class, 'index']);
+        Route::get('/prs/{id}', [PurchaseRequestController::class, 'show'])->whereUuid('id');
+        Route::get('/rabs/{id}', [RabController::class, 'show'])->whereUuid('id');
+        Route::put('/rabs/{id}', [RabController::class, 'updateDraft'])->whereUuid('id');
     });
 });

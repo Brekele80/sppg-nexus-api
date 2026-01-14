@@ -60,95 +60,37 @@ class GoodsReceiptService
      * - updates inventory_items.on_hand
      * - creates inventory_movements with signed qty and schema columns
      */
-    public function receive(GoodsReceipt $gr, string $actorId, InventoryService $inv): GoodsReceipt
+    public function receive(GoodsReceipt $gr, string $actorId)
     {
-        if ($gr->status !== 'SUBMITTED') {
-            throw new \RuntimeException('Only SUBMITTED receipts can be received');
-        }
+        return DB::transaction(function () use ($gr, $actorId) {
 
-        return DB::transaction(function () use ($gr, $actorId, $inv) {
-
-            $gr = GoodsReceipt::with(['items', 'purchaseOrder', 'purchaseOrder.items'])
-                ->lockForUpdate()
-                ->findOrFail($gr->id);
-
-            $po = $gr->purchaseOrder;
-            $poItems = $po ? $po->items->keyBy('id') : collect();
-
-            $hasDiscrepancy = false;
-
-            foreach ($gr->items as $it) {
-                $ordered = (float) $it->ordered_qty;
-                $received = (float) $it->received_qty;
-                $rejected = (float) $it->rejected_qty;
-
-                if ($received < 0 || $rejected < 0) {
-                    throw new \RuntimeException('received_qty/rejected_qty must be >= 0');
-                }
-                if (($received + $rejected) > $ordered + 0.0001) {
-                    throw new \RuntimeException('received_qty + rejected_qty cannot exceed ordered_qty');
-                }
-
-                if (($received + $rejected) < $ordered - 0.0001) $hasDiscrepancy = true;
-                if ($rejected > 0.0001) $hasDiscrepancy = true;
-            }
-
-            foreach ($gr->items as $it) {
-                $qtyIn = (float) $it->received_qty;
-                if ($qtyIn <= 0) continue;
-
-                $poItem = $poItems->get($it->purchase_order_item_id);
-                $unitCost = $poItem ? (float) $poItem->unit_price : 0;
-
-                $invItem = $inv->ensureItem($gr->branch_id, $it->item_name, $it->unit);
-
-                $lot = $inv->receiveIntoLot([
-                    'branch_id' => $gr->branch_id,
-                    'inventory_item_id' => $invItem->id,
-                    'goods_receipt_id' => $gr->id,
-                    'goods_receipt_item_id' => $it->id,
-                    'qty' => $qtyIn,
-                    'unit_cost' => $unitCost,
-                    'currency' => $po->currency ?? 'IDR',
-                    'received_at' => now(),
-                ]);
-
-                $inv->addOnHand($invItem, $qtyIn);
-
-                InventoryMovement::create([
-                    'id' => (string) Str::uuid(),
-                    'branch_id' => $gr->branch_id,
-                    'inventory_item_id' => $invItem->id,
-                    'inventory_lot_id' => $lot->id,
-
-                    'type' => 'GR_IN',
-                    'qty'  => $qtyIn,
-
-                    'source_type' => 'GR',
-                    'source_id'   => $gr->id,
-
-                    'ref_type' => 'goods_receipts',
-                    'ref_id'   => $gr->id,
-
-                    'actor_id' => $actorId,
-                    'note' => "Received via {$gr->gr_number}",
-                ]);
+            if ($gr->status !== 'SUBMITTED') {
+                abort(409, 'Goods receipt must be SUBMITTED before receiving');
             }
 
             $gr->update([
-                'status' => $hasDiscrepancy ? 'DISCREPANCY' : 'RECEIVED',
+                'status' => 'RECEIVED',
                 'received_by' => $actorId,
                 'received_at' => now(),
             ]);
 
-            $this->event(
-                $gr->id,
-                $actorId,
-                $hasDiscrepancy ? 'DISCREPANCY' : 'RECEIVED',
-                $hasDiscrepancy ? 'Receipt has discrepancies' : 'Receipt received and posted to inventory'
-            );
+            DB::table('goods_receipt_events')->insert([
+                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'goods_receipt_id' => $gr->id,
+                'actor_id' => $actorId,
+                'event' => 'RECEIVED',
+                'message' => 'Goods receipt received',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
 
-            return $gr->fresh()->load('items');
+            // 🔥 AUTO POST TO INVENTORY
+            $posting = \App\Services\GoodsReceiptPostingService::postReceipt($gr->id, $actorId);
+
+            return [
+                'goods_receipt' => $gr->fresh('items','events'),
+                'inventory_posting' => $posting,
+            ];
         });
     }
 

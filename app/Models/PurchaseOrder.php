@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PurchaseOrder extends Model
 {
@@ -35,4 +36,9 @@ class PurchaseOrder extends Model
         'payment_confirmed_at' => 'datetime',
         'paid_at' => 'datetime',
     ];
+
+    public function items(): HasMany
+    {
+        return $this->hasMany(PurchaseOrderItem::class, 'purchase_order_id', 'id');
+    }
 }
