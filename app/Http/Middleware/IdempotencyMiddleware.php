@@ -72,6 +72,13 @@ class IdempotencyMiddleware
 
             // Completed: replay
             if ($existing->response_status !== null) {
+                $raw = (string) ($existing->response_json ?? '');
+                if ($raw !== '') {
+                    return response($raw, (int) $existing->response_status)
+                        ->header('Content-Type', 'application/json');
+                }
+
+                // fallback legacy path
                 $body = $this->normalizeDbJsonb($existing->response_body);
                 return response()->json($body, (int) $existing->response_status);
             }
@@ -139,7 +146,18 @@ class IdempotencyMiddleware
         // Persist response (best-effort)
         try {
             $status = method_exists($response, 'getStatusCode') ? (int) $response->getStatusCode() : 200;
-            $body   = $this->extractJsonBody($response);
+
+            $raw = null;
+            if (method_exists($response, 'getContent')) {
+                $c = $response->getContent();
+                if (is_string($c) && trim($c) !== '') $raw = $c;
+            }
+
+            $decoded = null;
+            if (is_string($raw)) {
+                $tmp = json_decode($raw, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) $decoded = $tmp;
+            }
 
             DB::table('idempotency_keys')
                 ->where('company_id', $companyId)
@@ -149,11 +167,12 @@ class IdempotencyMiddleware
                 ->where('path', $path)
                 ->update([
                     'response_status' => $status,
-                    'response_body'   => $body,
+                    'response_json'   => $raw,     // exact replay
+                    'response_body'   => $decoded,  // optional for querying
                     'updated_at'      => now(),
                 ]);
         } catch (\Throwable $e) {
-            // do not break the request
+            // do not break request
         }
 
         return $response;

@@ -26,14 +26,35 @@ class AuditLogger
             }
         }
 
+        // Ensure payload is valid JSON for jsonb
+        $payload = $event['payload'];
+
+        if (is_string($payload)) {
+            // If caller already passed JSON, keep it but validate it is JSON
+            json_decode($payload, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new \InvalidArgumentException("Audit payload string is not valid JSON: " . json_last_error_msg());
+            }
+            $payloadJson = $payload;
+        } else {
+            // Encode arrays/objects safely
+            $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($payloadJson === false) {
+                throw new \RuntimeException("Failed to json_encode audit payload: " . json_last_error_msg());
+            }
+        }
+
         DB::table('audit_ledger')->insert([
             'id'         => (string) Str::uuid(),
-            'company_id' => $event['company_id'],
-            'actor_id'   => $event['actor_id'],
+            'company_id' => (string) $event['company_id'],
+            'actor_id'   => (string) $event['actor_id'],
             'action'     => (string) $event['action'],
             'entity'     => (string) $event['entity'],
-            'entity_id'  => $event['entity_id'],
-            'payload'    => $event['payload'],
+            'entity_id'  => (string) $event['entity_id'],
+
+            // IMPORTANT: bind as JSON text, Postgres will store it as jsonb
+            'payload'    => DB::raw("'" . str_replace("'", "''", $payloadJson) . "'::jsonb"),
+
             'created_at' => now(),
         ]);
     }

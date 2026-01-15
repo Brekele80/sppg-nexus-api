@@ -419,173 +419,106 @@ class InventoryController extends Controller
      */
     public function adjust(Request $request)
     {
+        // DC_ADMIN only (you already enforce via middleware, but keep safe)
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['DC_ADMIN']);
 
+        // company scoped
         $companyId = AuthUser::requireCompanyContext($request);
 
+        // Validate using the NEW document create contract
         $data = $request->validate([
             'branch_id' => 'required|uuid',
-            'type' => 'required|string|in:INCREASE,DECREASE,increase,decrease',
-            'notes' => 'nullable|string|max:2000',
-            'items' => 'required|array|min:1',
+            'reason'    => 'nullable|string|max:2000',
+            'notes'     => 'nullable|string|max:2000',
+
+            // Backward compatibility: accept old field names if present
+            // old v1: type=INCREASE|DECREASE and items[].qty_delta
+            'type'      => 'nullable|string',
+            'items'     => 'required|array|min:1',
             'items.*.item_name' => 'required|string|max:255',
-            'items.*.unit' => 'nullable|string|max:50',
-            'items.*.qty_delta' => 'required|numeric|min:0.001',
-            'items.*.remarks' => 'nullable|string|max:2000',
+            'items.*.unit'      => 'nullable|string|max:30',
+
+            // v2 expects qty, direction. We'll map.
+            'items.*.qty'       => 'nullable|numeric|min:0.001',
+            'items.*.direction' => 'nullable|string',
+            'items.*.qty_delta' => 'nullable|numeric|min:0.001',
+            'items.*.remarks'   => 'nullable|string|max:2000',
+
+            // optional v2 fields
+            'items.*.expiry_date' => 'nullable|date',
+            'items.*.unit_cost'   => 'nullable|numeric|min:0',
+            'items.*.currency'    => 'nullable|string|max:10',
+            'items.*.received_at' => 'nullable|date',
+            'items.*.preferred_lot_id' => 'nullable|uuid',
         ]);
 
-        $branchId = (string) $data['branch_id'];
+        // Map v1 -> v2
+        $mappedItems = [];
+        foreach ($data['items'] as $it) {
+            $itemName = (string)$it['item_name'];
+            $unit = $it['unit'] ?? null;
 
-        // 1) Branch must be inside company
-        $branchOk = DB::table('branches')
-            ->where('id', $branchId)
-            ->where('company_id', $companyId)
-            ->exists();
-        if (!$branchOk) {
-            return response()->json(['error'=>['code'=>'branch_invalid','message'=>'Branch not found in company']], 422);
-        }
+            // Determine direction + qty
+            $direction = null;
+            $qty = null;
 
-        // 2) User must have access to this branch
-        $allowed = AuthUser::allowedBranchIds($request);
-        if (!in_array($branchId, $allowed, true)) {
-            return response()->json(['error'=>['code'=>'branch_forbidden','message'=>'No access to this branch']], 403);
-        }
-
-        $type = strtoupper((string) $data['type']);
-        $sign = $type === 'INCREASE' ? 1.0 : -1.0;
-
-        return DB::transaction(function () use ($request, $u, $companyId, $branchId, $type, $sign, $data) {
-
-            // 3) Create adjustment header
-            $adj = StockAdjustment::create([
-                'id' => (string) Str::uuid(),
-                'branch_id' => $branchId,
-                'type' => $type,
-                'status' => 'POSTED',
-                'notes' => $data['notes'] ?? null,
-                'created_by' => $u->id,
-                'posted_at' => now(),
-            ]);
-
-            $linesForAudit = [];
-
-            foreach ($data['items'] as $it) {
-                $itemName = (string) $it['item_name'];
-                $unit     = $it['unit'] ?? null;
-                $deltaAbs = (float) $it['qty_delta'];
-                $deltaSigned = $sign * $deltaAbs;
-
-                // 4) Ensure inventory_items exists
-                // NOTE: This assumes inventory_items has (id uuid, branch_id uuid, item_name, unit, on_hand).
-                $invItem = DB::table('inventory_items')
-                    ->where('branch_id', $branchId)
-                    ->where('item_name', $itemName)
-                    ->where(function ($q) use ($unit) {
-                        if ($unit === null) $q->whereNull('unit');
-                        else $q->where('unit', $unit);
-                    })
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$invItem) {
-                    $invItemId = (string) Str::uuid();
-
-                    DB::table('inventory_items')->insert([
-                        'id' => $invItemId,
-                        'branch_id' => $branchId,
-                        'item_name' => $itemName,
-                        'unit' => $unit,
-                        'on_hand' => 0,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-
-                    $invItem = DB::table('inventory_items')
-                        ->where('id', $invItemId)
-                        ->lockForUpdate()
-                        ->first();
-                }
-
-                $beforeOnHand = (float) ($invItem->on_hand ?? 0);
-
-                // 5) Apply snapshot update (no negative protection for DECREASE? we enforce)
-                $afterOnHand = $beforeOnHand + $deltaSigned;
-                if ($afterOnHand < 0) {
-                    return response()->json([
-                        'error' => [
-                            'code' => 'insufficient_stock',
-                            'message' => "Cannot decrease below zero for item: {$itemName}"
-                        ]
-                    ], 409);
-                }
-
-                DB::table('inventory_items')
-                    ->where('id', $invItem->id)
-                    ->update([
-                        'on_hand' => $afterOnHand,
-                        'updated_at' => now(),
-                    ]);
-
-                // 6) Create adjustment item row
-                StockAdjustmentItem::create([
-                    'stock_adjustment_id' => $adj->id,
-                    'item_name' => $itemName,
-                    'unit' => $unit,
-                    'qty_delta' => $deltaSigned, // store signed so it matches movement direction
-                    'remarks' => $it['remarks'] ?? null,
-                ]);
-
-                // 7) Create movement row (signed qty)
-                InventoryMovement::create([
-                    'id' => (string) Str::uuid(),
-                    'branch_id' => $branchId,
-                    'inventory_item_id' => (string) $invItem->id,
-
-                    'type' => 'ADJUSTMENT',
-                    'qty' => $deltaSigned,
-
-                    'inventory_lot_id' => null,
-                    'source_type' => 'ADJUSTMENT',
-                    'source_id' => $adj->id,
-
-                    'ref_type' => 'stock_adjustments',
-                    'ref_id' => $adj->id,
-
-                    'actor_id' => $u->id,
-                    'note' => $type . ' via stock adjustment',
-                ]);
-
-                $linesForAudit[] = [
-                    'inventory_item_id' => (string) $invItem->id,
-                    'item_name' => $itemName,
-                    'unit' => $unit,
-                    'qty_delta' => $deltaSigned,
-                    'on_hand_before' => $beforeOnHand,
-                    'on_hand_after' => $afterOnHand,
-                    'remarks' => $it['remarks'] ?? null,
-                ];
+            if (!empty($it['direction']) && !empty($it['qty'])) {
+                $direction = strtoupper((string)$it['direction']);
+                $qty = (float)$it['qty'];
+            } else {
+                // v1 style
+                $type = strtoupper((string)($data['type'] ?? 'INCREASE'));
+                $direction = ($type === 'DECREASE') ? 'OUT' : 'IN';
+                $qty = (float)($it['qty_delta'] ?? 0);
             }
 
-            // 8) Audit ledger
-            Audit::log($request, 'adjust', 'stock_adjustments', $adj->id, [
-                'branch_id' => $branchId,
-                'type' => $type,
-                'status' => 'POSTED',
-                'notes' => $data['notes'] ?? null,
-                'posted_at' => (string) $adj->posted_at,
-                'lines' => $linesForAudit,
-                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
-            ]);
+            if (!in_array($direction, ['IN','OUT'], true) || $qty <= 0) {
+                return response()->json([
+                    'error' => ['code' => 'invalid_payload', 'message' => 'Each item must resolve to direction IN/OUT and qty > 0']
+                ], 422);
+            }
 
-            return response()->json([
-                'id' => (string) $adj->id,
-                'branch_id' => $branchId,
-                'type' => $type,
-                'status' => 'POSTED',
-                'posted_at' => $adj->posted_at,
-                'items' => $linesForAudit,
-            ], 201);
-        });
+            $mappedItems[] = [
+                'direction' => $direction,
+                'item_name' => $itemName,
+                'unit'      => $unit,
+                'qty'       => $qty,
+                'expiry_date' => $it['expiry_date'] ?? null,
+                'unit_cost'   => (float)($it['unit_cost'] ?? 0),
+                'currency'    => (string)($it['currency'] ?? 'IDR'),
+                'received_at' => $it['received_at'] ?? null,
+                'preferred_lot_id' => $it['preferred_lot_id'] ?? null,
+                'remarks'     => $it['remarks'] ?? null,
+            ];
+        }
+
+        // Use the document workflow internally
+        $ctrl = app(\App\Http\Controllers\StockAdjustmentController::class);
+
+        // 1) create
+        $createReq = $request->replace([
+            'branch_id' => $data['branch_id'],
+            'reason'    => $data['reason'] ?? null,
+            'notes'     => $data['notes'] ?? null,
+            'items'     => $mappedItems,
+        ]);
+
+        $createdResp = $ctrl->create($createReq);
+        $created = $createdResp->getData(true);
+        $docId = $created['id'] ?? null;
+
+        if (!$docId) {
+            return $createdResp; // bubble up error
+        }
+
+        // 2) submit
+        $ctrl->submit($request, $docId);
+
+        // 3) approve
+        $ctrl->approve($request, $docId);
+
+        // 4) post (returns posted summary)
+        return $ctrl->post($request, $docId, app(\App\Domain\Inventory\StockAdjustmentPostingService::class));
     }
 }

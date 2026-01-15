@@ -14,62 +14,64 @@ class RequireCompanyContext
 
         if (!$u || empty($u->company_id)) {
             return response()->json([
-                'error' => [
-                    'code' => 'unauthorized',
-                    'message' => 'Missing company context',
-                ],
+                'error' => ['code' => 'unauthorized', 'message' => 'Missing auth user or company context'],
             ], 401);
         }
 
-        if (empty($u->company_id)) {
+        $companyId = trim((string) $request->header('X-Company-Id'));
+        if ($companyId === '') {
             return response()->json([
-                'error' => [
-                    'code' => 'company_missing',
-                    'message' => 'User has no company_id',
-                ],
-            ], 401);
-        }
-
-        // Enforce explicit company scope
-        $companyId = $request->header('X-Company-Id');
-
-        if (empty($companyId)) {
-            return response()->json([
-                'error' => [
-                    'code' => 'company_header_required',
-                    'message' => 'Missing X-Company-Id header',
-                ],
+                'error' => ['code' => 'company_header_required', 'message' => 'Missing X-Company-Id header'],
             ], 422);
         }
 
-        // Must match the user company_id (strong tenant isolation)
-        if ($companyId !== $u->company_id) {
+        $userCompanyId = trim((string) $u->company_id);
+
+        // Strict tenant isolation
+        if (strcasecmp($companyId, $userCompanyId) !== 0) {
             return response()->json([
                 'error' => [
                     'code' => 'company_forbidden',
                     'message' => 'Company mismatch',
                     'details' => [
                         'requested_company_id' => $companyId,
-                        'user_company_id' => $u->company_id,
+                        'user_company_id' => $userCompanyId,
                     ],
                 ],
             ], 403);
         }
 
-        // Optional: ensure company exists (defense-in-depth)
+        // Defense-in-depth (optional but good)
         $exists = DB::table('companies')->where('id', $companyId)->exists();
         if (!$exists) {
             return response()->json([
-                'error' => [
-                    'code' => 'company_not_found',
-                    'message' => 'Company not found',
-                ],
+                'error' => ['code' => 'company_not_found', 'message' => 'Company not found'],
             ], 404);
         }
 
-        // Save resolved company in request context for controllers/services
         $request->attributes->set('company_id', $companyId);
 
         return $next($request);
+    }
+
+    private function normalizeUuid(string $uuid): string
+    {
+        $uuid = trim($uuid);
+        // UUIDs are case-insensitive; normalize to lowercase.
+        return strtolower($uuid);
+    }
+
+    private function tableExists(string $table): bool
+    {
+        try {
+            // Works for Postgres
+            $res = DB::selectOne(
+                "select to_regclass(?) as t",
+                ["public.{$table}"]
+            );
+            return !empty($res?->t);
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 }
