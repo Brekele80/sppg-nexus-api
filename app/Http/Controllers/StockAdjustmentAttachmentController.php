@@ -12,6 +12,28 @@ use App\Support\AuthUser;
 class StockAdjustmentAttachmentController extends Controller
 {
     /**
+     * Storage key must be tenant-safe and doc-scoped:
+     * companies/{companyId}/stock-adjustments/{docId}/...
+     */
+    private function expectedPrefix(string $companyId, string $docId): string
+    {
+        return "companies/{$companyId}/stock-adjustments/{$docId}/";
+    }
+
+    private function normalizeKey(string $key): string
+    {
+        $k = trim($key);
+        $k = ltrim($k, '/');
+        // normalize backslashes just in case client sends Windows paths
+        $k = str_replace('\\', '/', $k);
+        // collapse double slashes
+        while (str_contains($k, '//')) {
+            $k = str_replace('//', '/', $k);
+        }
+        return $k;
+    }
+
+    /**
      * GET /api/dc/stock-adjustments/{id}/attachments
      */
     public function index(Request $request, string $id)
@@ -38,8 +60,10 @@ class StockAdjustmentAttachmentController extends Controller
             return response()->json(['error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']], 403);
         }
 
+        // defense-in-depth: scope attachments to company_id too
         $rows = DB::table('stock_adjustment_attachments')
             ->where('stock_adjustment_id', $id)
+            ->where('company_id', (string)$companyId)
             ->orderByDesc('created_at')
             ->get([
                 'id',
@@ -110,17 +134,37 @@ class StockAdjustmentAttachmentController extends Controller
 
             $attachmentId = (string) Str::uuid();
 
-            $storageKey = ltrim(trim((string)$data['storage_key']), '/');
+            $storageKey = $this->normalizeKey((string)$data['storage_key']);
             if ($storageKey === '') {
                 return response()->json(['error' => ['code' => 'invalid_storage_key', 'message' => 'storage_key must not be empty']], 422);
             }
 
+            // enforce tenant-safe + doc-scoped convention
+            $prefix = $this->expectedPrefix((string)$companyId, (string)$doc->id);
+            if (!str_starts_with($storageKey, $prefix)) {
+                return response()->json([
+                    'error' => [
+                        'code' => 'invalid_storage_key_prefix',
+                        'message' => 'storage_key must be under the document prefix',
+                        'details' => [
+                            'expected_prefix' => $prefix,
+                            'got' => $storageKey,
+                        ],
+                    ]
+                ], 422);
+            }
+
+            $fileName = trim((string)$data['file_name']);
+            if ($fileName === '') {
+                return response()->json(['error' => ['code' => 'invalid_file_name', 'message' => 'file_name must not be empty']], 422);
+            }
+
             DB::table('stock_adjustment_attachments')->insert([
-                'id'                 => $attachmentId,
-                'stock_adjustment_id'=> (string)$doc->id,
+                'id'                  => $attachmentId,
+                'stock_adjustment_id' => (string)$doc->id,
                 'company_id'          => (string)$companyId,
                 'uploaded_by'         => (string)$u->id,
-                'file_name'           => trim((string)$data['file_name']),
+                'file_name'           => $fileName,
                 'mime_type'           => $data['mime_type'] ?? null,
                 'file_size'           => $data['file_size'] ?? null,
                 'storage_key'         => $storageKey,
@@ -128,19 +172,29 @@ class StockAdjustmentAttachmentController extends Controller
                 'created_at'          => now(),
             ]);
 
+            $row = DB::table('stock_adjustment_attachments')
+                ->where('id', $attachmentId)
+                ->where('company_id', (string)$companyId)
+                ->first();
+
             Audit::log($request, 'attach', 'stock_adjustments', (string)$doc->id, [
-                'attachment_id'  => $attachmentId,
-                'file_name'      => trim((string)$data['file_name']),
-                'storage_key'    => $storageKey,
-                'idempotency_key'=> (string)$request->header('Idempotency-Key', ''),
+                'attachment_id'   => $attachmentId,
+                'file_name'       => $fileName,
+                'storage_key'     => $storageKey,
+                'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
             ]);
 
             return response()->json([
-                'id'                  => $attachmentId,
-                'stock_adjustment_id' => (string)$doc->id,
-                'file_name'           => trim((string)$data['file_name']),
-                'storage_key'         => $storageKey,
-                'created_at'          => now(),
+                'id'                  => (string)$row->id,
+                'stock_adjustment_id' => (string)$row->stock_adjustment_id,
+                'company_id'          => (string)$row->company_id,
+                'uploaded_by'         => (string)$row->uploaded_by,
+                'file_name'           => (string)$row->file_name,
+                'mime_type'           => $row->mime_type,
+                'file_size'           => $row->file_size,
+                'storage_key'         => (string)$row->storage_key,
+                'public_url'          => $row->public_url,
+                'created_at'          => $row->created_at,
             ], 200);
         });
     }
@@ -185,9 +239,11 @@ class StockAdjustmentAttachmentController extends Controller
                 ], 409);
             }
 
+            // defense-in-depth: ensure attachment belongs to same company + doc
             $att = DB::table('stock_adjustment_attachments')
                 ->where('id', $attId)
                 ->where('stock_adjustment_id', $id)
+                ->where('company_id', (string)$companyId)
                 ->first();
 
             if (!$att) {
@@ -196,13 +252,14 @@ class StockAdjustmentAttachmentController extends Controller
 
             DB::table('stock_adjustment_attachments')
                 ->where('id', $attId)
+                ->where('company_id', (string)$companyId)
                 ->delete();
 
             Audit::log($request, 'detach', 'stock_adjustments', (string)$doc->id, [
-                'attachment_id'  => (string)$attId,
-                'file_name'      => (string)$att->file_name,
-                'storage_key'    => (string)$att->storage_key,
-                'idempotency_key'=> (string)$request->header('Idempotency-Key', ''),
+                'attachment_id'   => (string)$attId,
+                'file_name'       => (string)$att->file_name,
+                'storage_key'     => (string)$att->storage_key,
+                'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
             ]);
 
             return response()->json(['ok' => true], 200);
