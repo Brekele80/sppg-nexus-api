@@ -11,7 +11,17 @@ use Illuminate\Support\Str;
 class StockAdjustmentAttachmentController extends Controller
 {
     /**
-     * GET /api/dc/stock-adjustments/{id}/attachments
+     * @group Stock Adjustments (DC)
+     * APIs for stock adjustment documents and attachments (DC Admin).
+     */
+
+    /**
+     * List attachments for a stock adjustment.
+     *
+     * Requires DC_ADMIN and company context.
+     *
+     * @header X-Company-Id required The tenant company UUID.
+     * @authenticated
      */
     public function index(Request $request, string $id)
     {
@@ -22,32 +32,32 @@ class StockAdjustmentAttachmentController extends Controller
         $allowed = AuthUser::allowedBranchIds($request);
         if (empty($allowed)) {
             return response()->json([
-                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
+                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company'],
             ], 403);
         }
 
         $doc = DB::table('stock_adjustments')->where('id', $id)->first();
         if (!$doc) {
             return response()->json([
-                'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found']
+                'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found'],
             ], 404);
         }
 
-        if ((string) $doc->company_id !== (string) $companyId) {
+        if ((string)$doc->company_id !== (string)$companyId) {
             return response()->json([
-                'error' => ['code' => 'forbidden', 'message' => 'Forbidden']
+                'error' => ['code' => 'forbidden', 'message' => 'Forbidden'],
             ], 403);
         }
 
-        if (!in_array((string) $doc->branch_id, $allowed, true)) {
+        if (!in_array((string)$doc->branch_id, $allowed, true)) {
             return response()->json([
-                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch'],
             ], 403);
         }
 
         $rows = DB::table('stock_adjustment_attachments')
             ->where('stock_adjustment_id', $id)
-            ->where('company_id', (string) $companyId)
+            ->where('company_id', (string)$companyId)
             ->orderByDesc('created_at')
             ->get([
                 'id',
@@ -69,8 +79,14 @@ class StockAdjustmentAttachmentController extends Controller
     }
 
     /**
-     * POST /api/dc/stock-adjustments/{id}/attachments
-     * Registers attachment metadata (file already uploaded to storage).
+     * Register attachment metadata (file already uploaded to Supabase Storage).
+     *
+     * @header X-Company-Id required The tenant company UUID.
+     * @authenticated
+     * @bodyParam file_name string required Original filename. Example: test.pdf
+     * @bodyParam mime_type string nullable MIME type. Example: application/pdf
+     * @bodyParam file_size integer nullable File size in bytes. Example: 880355
+     * @bodyParam storage_key string required Storage key path. Example: companies/{companyId}/stock-adjustments/{docId}/{folder}/test.pdf
      */
     public function store(Request $request, string $id)
     {
@@ -81,7 +97,7 @@ class StockAdjustmentAttachmentController extends Controller
         $allowed = AuthUser::allowedBranchIds($request);
         if (empty($allowed)) {
             return response()->json([
-                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
+                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company'],
             ], 403);
         }
 
@@ -99,10 +115,10 @@ class StockAdjustmentAttachmentController extends Controller
             'public_url'  => 'nullable|string|max:2048',
         ]);
 
-        $fileName = trim((string) $data['file_name']);
+        $fileName = trim((string)$data['file_name']);
         if ($fileName === '') {
             return response()->json([
-                'error' => ['code' => 'invalid_file_name', 'message' => 'file_name must not be empty']
+                'error' => ['code' => 'invalid_file_name', 'message' => 'file_name must not be empty'],
             ], 422);
         }
 
@@ -112,52 +128,51 @@ class StockAdjustmentAttachmentController extends Controller
                     'code' => 'mime_not_allowed',
                     'message' => 'mime_type not allowed',
                     'details' => ['allowed' => $allowedMime, 'got' => $data['mime_type']],
-                ]
+                ],
             ], 422);
         }
 
         return DB::transaction(function () use ($request, $id, $companyId, $u, $allowed, $data, $fileName) {
             $doc = DB::table('stock_adjustments')->where('id', $id)->lockForUpdate()->first();
-
             if (!$doc) {
                 return response()->json([
-                    'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found']
+                    'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found'],
                 ], 404);
             }
 
-            if ((string) $doc->company_id !== (string) $companyId) {
+            if ((string)$doc->company_id !== (string)$companyId) {
                 return response()->json([
-                    'error' => ['code' => 'forbidden', 'message' => 'Forbidden']
+                    'error' => ['code' => 'forbidden', 'message' => 'Forbidden'],
                 ], 403);
             }
 
-            if (!in_array((string) $doc->branch_id, $allowed, true)) {
+            if (!in_array((string)$doc->branch_id, $allowed, true)) {
                 return response()->json([
-                    'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+                    'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch'],
                 ], 403);
             }
 
-            $status = (string) $doc->status;
+            $status = (string)$doc->status;
             if (!in_array($status, ['DRAFT', 'SUBMITTED'], true)) {
                 return response()->json([
                     'error' => [
                         'code' => 'invalid_status',
                         'message' => 'Attachments can only be modified in DRAFT or SUBMITTED',
                         'details' => ['status' => $status],
-                    ]
+                    ],
                 ], 409);
             }
 
-            $storageKey = $this->normalizeStorageKey((string) $data['storage_key']);
-            $this->enforceStorageKeyPrefix($storageKey, (string) $companyId, (string) $doc->id);
+            $storageKey = $this->normalizeStorageKey((string)$data['storage_key']);
+            $this->enforceStorageKeyPrefix($storageKey, (string)$companyId, (string)$doc->id);
 
             $attachmentId = (string) Str::uuid();
 
             DB::table('stock_adjustment_attachments')->insert([
                 'id'                  => $attachmentId,
-                'stock_adjustment_id' => (string) $doc->id,
-                'company_id'          => (string) $companyId,
-                'uploaded_by'         => (string) $u->id,
+                'stock_adjustment_id' => (string)$doc->id,
+                'company_id'          => (string)$companyId,
+                'uploaded_by'         => (string)$u->id,
                 'file_name'           => $fileName,
                 'mime_type'           => $data['mime_type'] ?? null,
                 'file_size'           => $data['file_size'] ?? null,
@@ -166,27 +181,27 @@ class StockAdjustmentAttachmentController extends Controller
                 'created_at'          => now(),
             ]);
 
-            Audit::log($request, 'attach', 'stock_adjustments', (string) $doc->id, [
+            Audit::log($request, 'attach', 'stock_adjustments', (string)$doc->id, [
                 'attachment_id'   => $attachmentId,
                 'file_name'       => $fileName,
                 'storage_key'     => $storageKey,
-                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+                'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
             ]);
 
             $row = DB::table('stock_adjustment_attachments')
                 ->where('id', $attachmentId)
-                ->where('company_id', (string) $companyId)
+                ->where('company_id', (string)$companyId)
                 ->first();
 
             return response()->json([
-                'id'                  => (string) $row->id,
-                'stock_adjustment_id' => (string) $row->stock_adjustment_id,
-                'company_id'          => (string) $row->company_id,
-                'uploaded_by'         => (string) $row->uploaded_by,
-                'file_name'           => (string) $row->file_name,
+                'id'                  => (string)$row->id,
+                'stock_adjustment_id' => (string)$row->stock_adjustment_id,
+                'company_id'          => (string)$row->company_id,
+                'uploaded_by'         => (string)$row->uploaded_by,
+                'file_name'           => (string)$row->file_name,
                 'mime_type'           => $row->mime_type,
                 'file_size'           => $row->file_size,
-                'storage_key'         => (string) $row->storage_key,
+                'storage_key'         => (string)$row->storage_key,
                 'public_url'          => $row->public_url,
                 'created_at'          => $row->created_at,
             ], 200);
@@ -194,8 +209,10 @@ class StockAdjustmentAttachmentController extends Controller
     }
 
     /**
-     * DELETE /api/dc/stock-adjustments/{id}/attachments/{attId}
-     * Removes metadata only (does not delete blob).
+     * Delete attachment metadata (does not delete the blob).
+     *
+     * @header X-Company-Id required The tenant company UUID.
+     * @authenticated
      */
     public function destroy(Request $request, string $id, string $attId)
     {
@@ -206,64 +223,63 @@ class StockAdjustmentAttachmentController extends Controller
         $allowed = AuthUser::allowedBranchIds($request);
         if (empty($allowed)) {
             return response()->json([
-                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
+                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company'],
             ], 403);
         }
 
         return DB::transaction(function () use ($request, $id, $attId, $companyId, $allowed) {
             $doc = DB::table('stock_adjustments')->where('id', $id)->lockForUpdate()->first();
-
             if (!$doc) {
                 return response()->json([
-                    'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found']
+                    'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found'],
                 ], 404);
             }
 
-            if ((string) $doc->company_id !== (string) $companyId) {
+            if ((string)$doc->company_id !== (string)$companyId) {
                 return response()->json([
-                    'error' => ['code' => 'forbidden', 'message' => 'Forbidden']
+                    'error' => ['code' => 'forbidden', 'message' => 'Forbidden'],
                 ], 403);
             }
 
-            if (!in_array((string) $doc->branch_id, $allowed, true)) {
+            if (!in_array((string)$doc->branch_id, $allowed, true)) {
                 return response()->json([
-                    'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+                    'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch'],
                 ], 403);
             }
 
-            $status = (string) $doc->status;
+            $status = (string)$doc->status;
             if (!in_array($status, ['DRAFT', 'SUBMITTED'], true)) {
                 return response()->json([
                     'error' => [
                         'code' => 'invalid_status',
                         'message' => 'Attachments can only be modified in DRAFT or SUBMITTED',
                         'details' => ['status' => $status],
-                    ]
+                    ],
                 ], 409);
             }
 
             $att = DB::table('stock_adjustment_attachments')
                 ->where('id', $attId)
                 ->where('stock_adjustment_id', $id)
-                ->where('company_id', (string) $companyId)
+                ->where('company_id', (string)$companyId)
                 ->first();
 
             if (!$att) {
                 return response()->json([
-                    'error' => ['code' => 'not_found', 'message' => 'Attachment not found']
+                    'error' => ['code' => 'not_found', 'message' => 'Attachment not found'],
                 ], 404);
             }
 
             DB::table('stock_adjustment_attachments')
                 ->where('id', $attId)
-                ->where('company_id', (string) $companyId)
+                ->where('company_id', (string)$companyId)
                 ->delete();
 
-            Audit::log($request, 'detach', 'stock_adjustments', (string) $doc->id, [
-                'attachment_id'   => (string) $attId,
-                'file_name'       => (string) $att->file_name,
-                'storage_key'     => (string) $att->storage_key,
-                'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
+            Audit::log($request, 'detach', 'stock_adjustments', (string)$doc->id, [
+                'attachment_id'   => (string)$attId,
+                'file_name'       => (string)$att->file_name,
+                'storage_key'     => (string)$att->storage_key,
+                'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
             ]);
 
             return response()->json(['ok' => true], 200);
@@ -271,8 +287,10 @@ class StockAdjustmentAttachmentController extends Controller
     }
 
     /**
-     * GET /api/dc/stock-adjustments/{id}/attachments/{attId}/download
-     * Returns a short-lived signed URL for private Supabase Storage.
+     * Get a short-lived signed download URL for a private attachment.
+     *
+     * @header X-Company-Id required The tenant company UUID.
+     * @authenticated
      */
     public function download(Request $request, string $id, string $attId)
     {
@@ -283,38 +301,38 @@ class StockAdjustmentAttachmentController extends Controller
         $allowed = AuthUser::allowedBranchIds($request);
         if (empty($allowed)) {
             return response()->json([
-                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
+                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company'],
             ], 403);
         }
 
         $doc = DB::table('stock_adjustments')->where('id', $id)->first();
         if (!$doc) {
             return response()->json([
-                'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found']
+                'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found'],
             ], 404);
         }
 
-        if ((string) $doc->company_id !== (string) $companyId) {
+        if ((string)$doc->company_id !== (string)$companyId) {
             return response()->json([
-                'error' => ['code' => 'forbidden', 'message' => 'Forbidden']
+                'error' => ['code' => 'forbidden', 'message' => 'Forbidden'],
             ], 403);
         }
 
-        if (!in_array((string) $doc->branch_id, $allowed, true)) {
+        if (!in_array((string)$doc->branch_id, $allowed, true)) {
             return response()->json([
-                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch'],
             ], 403);
         }
 
         $att = DB::table('stock_adjustment_attachments')
             ->where('id', $attId)
             ->where('stock_adjustment_id', $id)
-            ->where('company_id', (string) $companyId)
+            ->where('company_id', (string)$companyId)
             ->first();
 
         if (!$att) {
             return response()->json([
-                'error' => ['code' => 'not_found', 'message' => 'Attachment not found']
+                'error' => ['code' => 'not_found', 'message' => 'Attachment not found'],
             ], 404);
         }
 
@@ -326,24 +344,22 @@ class StockAdjustmentAttachmentController extends Controller
             return response()->json([
                 'error' => [
                     'code' => 'server_misconfig',
-                    'message' => 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing'
-                ]
+                    'message' => 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing',
+                ],
             ], 500);
         }
 
-        $storageKey = $this->normalizeStorageKey((string) $att->storage_key);
-        $this->enforceStorageKeyPrefix($storageKey, (string) $companyId, (string) $doc->id);
+        $storageKey = $this->normalizeStorageKey((string)$att->storage_key);
+        $this->enforceStorageKeyPrefix($storageKey, (string)$companyId, (string)$doc->id);
 
-        // Supabase sign endpoint:
-        // POST {SUPABASE_URL}/storage/v1/object/sign/{bucket}/{path}
         $expiresIn = 60;
-        $path = $storageKey;
 
+        // POST {SUPABASE_URL}/storage/v1/object/sign/{bucket}/{path}
         $signUrl = $supabaseUrl
             . '/storage/v1/object/sign/'
             . rawurlencode($bucket)
             . '/'
-            . str_replace('%2F', '/', rawurlencode($path));
+            . str_replace('%2F', '/', rawurlencode($storageKey));
 
         $ch = curl_init($signUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -366,7 +382,7 @@ class StockAdjustmentAttachmentController extends Controller
                     'code' => 'supabase_sign_failed',
                     'message' => 'Failed to create signed URL',
                     'details' => ['http' => $http, 'curl_error' => $err, 'body' => $raw],
-                ]
+                ],
             ], 502);
         }
 
@@ -379,21 +395,20 @@ class StockAdjustmentAttachmentController extends Controller
                     'code' => 'supabase_sign_invalid',
                     'message' => 'Supabase sign response missing signedURL',
                     'details' => ['body' => $json],
-                ]
+                ],
             ], 502);
         }
 
-        // Normalize: absolute + ensure exactly ONE /storage/v1
         $signedUrl = $this->normalizeSupabaseSignedUrl($supabaseUrl, $signed);
 
-        Audit::log($request, 'download_attachment', 'stock_adjustments', (string) $doc->id, [
-            'attachment_id' => (string) $attId,
+        Audit::log($request, 'download_attachment', 'stock_adjustments', (string)$doc->id, [
+            'attachment_id' => (string)$attId,
             'storage_key'   => $storageKey,
         ]);
 
         return response()->json([
-            'attachment_id' => (string) $attId,
-            'file_name'     => (string) $att->file_name,
+            'attachment_id' => (string)$attId,
+            'file_name'     => (string)$att->file_name,
             'expires_in'    => $expiresIn,
             'url'           => $signedUrl,
         ], 200);
@@ -417,6 +432,7 @@ class StockAdjustmentAttachmentController extends Controller
             $k = str_replace('//', '/', $k);
         }
 
+        // Defense-in-depth: reject traversal/null bytes.
         if ($k === '' || str_contains($k, '../') || str_contains($k, '..\\') || str_contains($k, "\0")) {
             abort(422, 'Invalid storage_key');
         }
@@ -450,16 +466,14 @@ class StockAdjustmentAttachmentController extends Controller
         $supabaseUrl = rtrim($supabaseUrl, '/');
         $signed = trim($signed);
 
-        // If relative path, make absolute
         if (str_starts_with($signed, '/')) {
             $signed = $supabaseUrl . $signed;
         }
 
-        // Fix missing /storage/v1
+        // Ensure /storage/v1 is present exactly once in the URL path.
         $signed = str_replace($supabaseUrl . '/object/sign/', $supabaseUrl . '/storage/v1/object/sign/', $signed);
         $signed = str_replace('/object/sign/', '/storage/v1/object/sign/', $signed);
 
-        // Remove accidental double prefix
         $signed = str_replace($supabaseUrl . '/storage/v1/storage/v1/', $supabaseUrl . '/storage/v1/', $signed);
         $signed = str_replace('/storage/v1/storage/v1/', '/storage/v1/', $signed);
 
