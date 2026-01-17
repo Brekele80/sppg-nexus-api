@@ -1,95 +1,78 @@
 <?php
 
-use Knuckles\Scribe\Config\AuthIn;
-
 return [
-
-    /*
-    |--------------------------------------------------------------------------
-    | Title & Description
-    |--------------------------------------------------------------------------
-    */
-    'title' => env('SCRIBE_TITLE', 'SPPG Nexus API'),
-    'description' => env('SCRIBE_DESCRIPTION', 'Audit-first, multi-tenant procurement ERP API.'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Base URL
-    |--------------------------------------------------------------------------
-    */
+    'title' => 'SPPG Nexus API',
+    'description' => 'Audit-first, multi-tenant procurement ERP API.',
     'base_url' => env('APP_URL', 'http://127.0.0.1:8000'),
 
-    /*
-    |--------------------------------------------------------------------------
-    | Routes to document
-    |--------------------------------------------------------------------------
-    | Scribe will scan Laravel routes and include/exclude based on these patterns.
-    */
+    /**
+     * Which routes to document.
+     * We document only /api/*, excluding /api/health.
+     */
     'routes' => [
         [
             'match' => [
-                'domains' => ['*'],
                 'prefixes' => ['api/*'],
-
-                // IMPORTANT: Scribe v4 uses include/exclude inside match.
-                'include' => [
-                    'api/me',
-                    'api/dc/*',
-                    'api/prs*',
-                    'api/rabs*',
-                    'api/pos*',
-                    'api/supplier/*',
-                    'api/inventory*',
-                    'api/notifications*',
-                    'api/audit*',
-                ],
-                'exclude' => [
-                    'api/health',
-                ],
+                'domains' => ['*'],
+            ],
+            'include' => [
+                'api/me',
+                'api/dc/*',
+                'api/prs*',
+                'api/rabs*',
+                'api/pos*',
+                'api/supplier/*',
+                'api/inventory*',
+                'api/notifications*',
+                'api/audit*',
+            ],
+            'exclude' => [
+                'api/health',
             ],
         ],
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Auth
-    |--------------------------------------------------------------------------
-    | Your API uses Authorization: Bearer <Supabase JWT>.
-    | Set SCRIBE_AUTH_TOKEN to a valid JWT in local env if you want Scribe to call endpoints.
-    */
+    /**
+     * Auth configuration: Supabase JWTs (Bearer).
+     */
     'auth' => [
         'enabled' => true,
         'default' => true,
-
-        // Prefer constants for correctness (AuthIn::BEARER)
-        'in' => AuthIn::BEARER,
+        'in' => 'bearer',
         'name' => 'Authorization',
-
-        // If you leave blank, Scribe can still generate docs from annotations,
-        // but "response calls" won't authenticate.
-        'use_value' => env('SCRIBE_AUTH_TOKEN', ''),
+        'use_value' => env('SCRIBE_AUTH_TOKEN', ''), // used during `scribe:generate` for authenticated routes
+        'placeholder' => 'Bearer {SUPABASE_JWT}',
+        'extra_info' => 'Use a Supabase access_token as Bearer token.',
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Global headers (multi-tenant)
-    |--------------------------------------------------------------------------
-    | This makes Scribe include X-Company-Id in requests it makes during generation.
-    */
+    /**
+     * Global headers to show on every endpoint.
+     * X-Company-Id is required for tenant-scoped routes (almost everything except /me and /health).
+     */
     'headers' => [
-        'X-Company-Id' => env('SCRIBE_COMPANY_ID', ''),
         'Accept' => 'application/json',
+        'X-Company-Id' => env('SCRIBE_COMPANY_ID', ''),
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Output: OpenAPI + Postman
-    |--------------------------------------------------------------------------
-    */
+    /**
+     * Output formats.
+     */
     'openapi' => [
         'enabled' => true,
     ],
     'postman' => [
         'enabled' => true,
     ],
+
+    /**
+     * Where to write generated docs/artifacts.
+     */
+    'output' => [
+        'path' => 'public/docs',
+    ],
+
+    /**
+     * Default response language.
+     */
+    'type' => 'static',
 ];
