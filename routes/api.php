@@ -83,6 +83,10 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
         // Attachments read
         Route::get('/stock-adjustments/{id}/attachments', [StockAdjustmentAttachmentController::class, 'index'])
             ->whereUuid('id');
+
+        Route::get('/stock-adjustments/{id}/attachments/{attId}/download', [StockAdjustmentAttachmentController::class, 'download'])
+            ->whereUuid('id')
+            ->whereUuid('attId');
     });
 
     // Purchase reads
@@ -140,7 +144,7 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('pos/{id}/reject', [SupplierPortalController::class, 'reject'])->whereUuid('id');
             Route::post('pos/{id}/delivered', [SupplierPortalController::class, 'markDelivered'])->whereUuid('id');
 
-            // Supplier reads kept here for consistency
+            // Supplier reads kept here for consistency (but still idempotency-wrapped here)
             Route::get('pos', [SupplierPortalController::class, 'myPurchaseOrders']);
         });
 
@@ -169,6 +173,7 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             // Attachments mutations (metadata only)
             Route::post('/stock-adjustments/{id}/attachments', [StockAdjustmentAttachmentController::class, 'store'])
                 ->whereUuid('id');
+
             Route::delete('/stock-adjustments/{id}/attachments/{attId}', [StockAdjustmentAttachmentController::class, 'destroy'])
                 ->whereUuid('id')
                 ->whereUuid('attId');
