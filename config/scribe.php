@@ -3,7 +3,7 @@
 return [
     'title' => 'SPPG Nexus API',
     'description' => 'Audit-first, multi-tenant procurement ERP API.',
-    'base_url' => env('APP_URL', 'http://127.0.0.1:8000'),
+    'base_url' => env('SCRIBE_BASE_URL', env('APP_URL', 'http://127.0.0.1:8000')),
 
     /**
      * Which routes to document.

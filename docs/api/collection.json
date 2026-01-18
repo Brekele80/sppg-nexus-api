@@ -1,0 +1,2117 @@
+{
+    "variable": [
+        {
+            "id": "baseUrl",
+            "key": "baseUrl",
+            "type": "string",
+            "name": "string",
+            "value": "http:\/\/127.0.0.1:8000"
+        }
+    ],
+    "info": {
+        "name": "SPPG Nexus API",
+        "_postman_id": "9652998f-4e17-4bd1-9d8e-e402055c733d",
+        "description": "Audit-first, multi-tenant procurement ERP API.",
+        "schema": "https:\/\/schema.getpostman.com\/json\/collection\/v2.1.0\/collection.json"
+    },
+    "item": [
+        {
+            "name": "Endpoints",
+            "description": "",
+            "item": [
+                {
+                    "name": "GET api\/me",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/me",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/me"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "59"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET api\/suppliers",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/suppliers",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/suppliers"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "58"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET api\/notifications",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/notifications",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/notifications"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "57"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET api\/audit",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/audit",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/audit"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "56"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET \/api\/inventory\n(Your existing read-only implementation, unchanged)",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/inventory",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/inventory"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "55"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET \/api\/inventory\/movements\n(Your existing implementation, unchanged)",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/inventory\/movements",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/inventory\/movements"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "54"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET \/api\/inventory\/lots\n(Your existing implementation, unchanged)",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/inventory\/lots",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/inventory\/lots"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "53"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET \/api\/inventory\/items\/{itemId}\/lots\n(Your existing implementation, unchanged)",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/inventory\/items\/:itemId\/lots",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/inventory\/items\/:itemId\/lots",
+                            "variable": [
+                                {
+                                    "id": "itemId",
+                                    "key": "itemId",
+                                    "value": "consequatur",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "52"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET api\/pos\/{id}",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/pos\/:id",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/pos\/:id",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the po."
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "51"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET \/api\/dc\/receipts\/{gr}",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/receipts\/:gr",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/receipts\/:gr",
+                            "variable": [
+                                {
+                                    "id": "gr",
+                                    "key": "gr",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "50"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET \/api\/dc\/stock-adjustments",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"branch_id\":\"66529e01-d113-3473-8d6f-9e11e09332ea\",\"status\":\"APPROVED\",\"q\":\"eopfuudtdsufvyvddqamn\",\"limit\":8}"
+                        },
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "49"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET \/api\/dc\/stock-adjustments\/{id}",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "48"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "List attachments for a stock adjustment.",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id\/attachments",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id\/attachments",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "X-Company-Id",
+                                "value": "required Tenant company UUID."
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": "Requires DC_ADMIN and tenant context."
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "47"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "Get a short-lived signed download URL for a private attachment.",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id\/attachments\/:attId\/download",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id\/attachments\/:attId\/download",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                },
+                                {
+                                    "id": "attId",
+                                    "key": "attId",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "X-Company-Id",
+                                "value": "required Tenant company UUID."
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": "Requires DC_ADMIN and tenant context."
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "46"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET api\/prs",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/prs",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/prs"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "45"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET api\/prs\/{id}",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/prs\/:id",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/prs\/:id",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the pr."
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "44"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "GET api\/rabs\/{id}",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/rabs\/:id",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/rabs\/:id",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the rab."
+                                }
+                            ]
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "43"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "PUT api\/rabs\/{id}",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/rabs\/:id",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/rabs\/:id",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the rab."
+                                }
+                            ]
+                        },
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"currency\":\"vmqeopfuu\",\"line_items\":[{\"item_name\":\"vmqeopfuudtdsufvyvddq\",\"unit\":\"amniihfqcoynlazghdtqt\",\"qty\":56,\"unit_price\":80}]}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/notifications\/{id}\/read",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/notifications\/:id\/read",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/notifications\/:id\/read",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the notification."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/notifications\/read-all",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/notifications\/read-all",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/notifications\/read-all"
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/prs",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/prs",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/prs"
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"branch_id\":\"66529e01-d113-3473-8d6f-9e11e09332ea\",\"notes\":\"consequatur\",\"items\":[{\"item_name\":\"vmqeopfuudtdsufvyvddq\",\"unit\":\"amniihfqcoynlazghdtqt\",\"qty\":56,\"remarks\":\"consequatur\"}]}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/prs\/{id}\/submit",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/prs\/:id\/submit",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/prs\/:id\/submit",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the pr."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/kitchen\/issues",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/kitchen\/issues",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/kitchen\/issues"
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"notes\":\"vmqeopfuudtdsufvyvddq\",\"items\":[{\"item_name\":\"vmqeopfuudtdsufvyvddq\",\"unit\":\"amniihfqcoynlazghdtqt\",\"requested_qty\":56,\"remarks\":\"xbajwbpilpmufinllwloa\"}]}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/kitchen\/issues\/{id}\/submit",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/kitchen\/issues\/:id\/submit",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/kitchen\/issues\/:id\/submit",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the issue."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/prs\/{id}\/rabs",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/prs\/:id\/rabs",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/prs\/:id\/rabs",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the pr."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"currency\":\"vmqeopfuu\",\"line_items\":[{\"item_name\":\"vmqeopfuudtdsufvyvddq\",\"unit\":\"amniihfqcoynlazghdtqt\",\"qty\":56,\"unit_price\":80}]}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/rabs\/{id}\/submit",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/rabs\/:id\/submit",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/rabs\/:id\/submit",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the rab."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/rabs\/{id}\/revise",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/rabs\/:id\/revise",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/rabs\/:id\/revise",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the rab."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/rabs\/{rabId}\/po",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/rabs\/:rabId\/po",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/rabs\/:rabId\/po",
+                            "variable": [
+                                {
+                                    "id": "rabId",
+                                    "key": "rabId",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"supplier_id\":\"66529e01-d113-3473-8d6f-9e11e09332ea\",\"notes\":\"consequatur\"}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/pos\/{id}\/send",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/pos\/:id\/send",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/pos\/:id\/send",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the po."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/rabs\/{id}\/decisions",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/rabs\/:id\/decisions",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/rabs\/:id\/decisions",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the rab."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"decision\":\"reject\",\"reason\":\"mqeopfuudtdsufvyvddqa\"}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/accounting\/purchase-orders\/{id}\/payment-proof",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/accounting\/purchase-orders\/:id\/payment-proof",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/accounting\/purchase-orders\/:id\/payment-proof",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the purchase order."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "multipart\/form-data"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "notes",
+                                    "value": "vmqeopfuudtdsufvyvddq",
+                                    "type": "text",
+                                    "description": "Must not be greater than 2000 characters."
+                                },
+                                {
+                                    "key": "proof",
+                                    "src": [],
+                                    "type": "file"
+                                }
+                            ]
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/supplier\/purchase-orders\/{id}\/confirm-payment",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/supplier\/purchase-orders\/:id\/confirm-payment",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/supplier\/purchase-orders\/:id\/confirm-payment",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the purchase order."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/supplier\/pos\/{id}\/confirm",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/supplier\/pos\/:id\/confirm",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/supplier\/pos\/:id\/confirm",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the po."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/supplier\/pos\/{id}\/reject",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/supplier\/pos\/:id\/reject",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/supplier\/pos\/:id\/reject",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the po."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"reason\":\"vmqeopfuudtdsufvyvddq\"}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/supplier\/pos\/{id}\/delivered",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/supplier\/pos\/:id\/delivered",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/supplier\/pos\/:id\/delivered",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the po."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"note\":\"vmqeopfuudtdsufvyvddq\"}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "GET api\/supplier\/pos",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/supplier\/pos",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/supplier\/pos"
+                        },
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": [
+                        {
+                            "header": [
+                                {
+                                    "key": "cache-control",
+                                    "value": "no-cache, private"
+                                },
+                                {
+                                    "key": "content-type",
+                                    "value": "application\/json"
+                                },
+                                {
+                                    "key": "x-ratelimit-limit",
+                                    "value": "60"
+                                },
+                                {
+                                    "key": "x-ratelimit-remaining",
+                                    "value": "42"
+                                },
+                                {
+                                    "key": "access-control-allow-origin",
+                                    "value": "*"
+                                }
+                            ],
+                            "code": 401,
+                            "body": "{\"error\":{\"code\":\"auth_invalid_token\",\"message\":\"Invalid token\"}}",
+                            "name": ""
+                        }
+                    ]
+                },
+                {
+                    "name": "POST \/api\/dc\/pos\/{po}\/receipts\nCreate GR from PO (idempotent via middleware + DB unique if you have it).",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/pos\/:po\/receipts",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/pos\/:po\/receipts",
+                            "variable": [
+                                {
+                                    "id": "po",
+                                    "key": "po",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The po."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "PATCH \/api\/dc\/receipts\/{gr}\nUpdate GR line quantities while DRAFT only.",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/receipts\/:gr",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/receipts\/:gr",
+                            "variable": [
+                                {
+                                    "id": "gr",
+                                    "key": "gr",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"items\":[{\"id\":\"66529e01-d113-3473-8d6f-9e11e09332ea\",\"received_qty\":56,\"rejected_qty\":16}]}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST \/api\/dc\/receipts\/{gr}\/submit",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/receipts\/:gr\/submit",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/receipts\/:gr\/submit",
+                            "variable": [
+                                {
+                                    "id": "gr",
+                                    "key": "gr",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST \/api\/dc\/receipts\/{gr}\/receive\nThis should also be where you post inventory (if your design does it here).",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/receipts\/:gr\/receive",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/receipts\/:gr\/receive",
+                            "variable": [
+                                {
+                                    "id": "gr",
+                                    "key": "gr",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/dc\/issues\/{id}\/approve",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/issues\/:id\/approve",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/issues\/:id\/approve",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the issue."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST api\/dc\/issues\/{id}\/issue",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/issues\/:id\/issue",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/issues\/:id\/issue",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the issue."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST \/api\/dc\/adjustments\nBody:\n{\n  \"branch_id\": \"uuid\",\n  \"type\": \"INCREASE|DECREASE\",\n  \"notes\": \"optional\",\n  \"items\": [\n    {\"item_name\":\"Beras\",\"unit\":\"kg\",\"qty_delta\": 5, \"remarks\":\"optional\"}\n  ]\n}",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/adjustments",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/adjustments"
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"branch_id\":\"66529e01-d113-3473-8d6f-9e11e09332ea\",\"reason\":\"qeopfuudtdsufvyvddqam\",\"notes\":\"niihfqcoynlazghdtqtqx\",\"type\":\"consequatur\",\"items\":[{\"item_name\":\"vmqeopfuudtdsufvyvddq\",\"unit\":\"amniihfqcoynlazghdtqt\",\"qty\":56,\"direction\":\"consequatur\",\"qty_delta\":45,\"remarks\":\"qeopfuudtdsufvyvddqam\",\"expiry_date\":\"2026-01-18T07:30:28\",\"unit_cost\":46,\"currency\":\"iihfqcoyn\",\"received_at\":\"2026-01-18T07:30:28\",\"preferred_lot_id\":\"b5505987-a61d-3f90-937f-a5992ff3fb8c\"}]}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST \/api\/dc\/stock-adjustments (create DRAFT)",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments"
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"branch_id\":\"66529e01-d113-3473-8d6f-9e11e09332ea\",\"reason\":\"qeopfuudtdsufvyvddqam\",\"notes\":\"niihfqcoynlazghdtqtqx\",\"items\":[{\"direction\":\"OUT\",\"item_name\":\"mqeopfuudtdsufvyvddqa\",\"unit\":\"mniihfqcoynlazghdtqtq\",\"qty\":80,\"expiry_date\":\"2026-01-18T07:30:28\",\"unit_cost\":6,\"currency\":\"ajwbpilpm\",\"received_at\":\"2026-01-18T07:30:28\",\"preferred_lot_id\":\"99b60756-f4f1-3bfb-adf2-2b1e4ff136ba\",\"remarks\":\"inllwloauydlsmsjuryvo\"}]}"
+                        },
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST \/api\/dc\/stock-adjustments\/{id}\/submit",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id\/submit",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id\/submit",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST \/api\/dc\/stock-adjustments\/{id}\/approve",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id\/approve",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id\/approve",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "POST \/api\/dc\/stock-adjustments\/{id}\/post",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id\/post",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id\/post",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": ""
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Register attachment metadata (file already uploaded to Supabase Storage).",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id\/attachments",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id\/attachments",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                }
+                            ]
+                        },
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "X-Company-Id",
+                                "value": "required Tenant company UUID."
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\"file_name\":\"test.pdf\",\"mime_type\":\"application\\\/pdf\",\"file_size\":880355,\"storage_key\":\"companies\\\/{companyId}\\\/stock-adjustments\\\/{docId}\\\/{folder}\\\/test.pdf\",\"public_url\":null}"
+                        },
+                        "description": "Requires DC_ADMIN and tenant context."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete attachment metadata (does not delete the blob).",
+                    "request": {
+                        "url": {
+                            "host": "{{baseUrl}}",
+                            "path": "api\/dc\/stock-adjustments\/:id\/attachments\/:attId",
+                            "query": [],
+                            "raw": "{{baseUrl}}\/api\/dc\/stock-adjustments\/:id\/attachments\/:attId",
+                            "variable": [
+                                {
+                                    "id": "id",
+                                    "key": "id",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": "The ID of the stock adjustment."
+                                },
+                                {
+                                    "id": "attId",
+                                    "key": "attId",
+                                    "value": "DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca",
+                                    "description": ""
+                                }
+                            ]
+                        },
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "X-Company-Id",
+                                "value": "required Tenant company UUID."
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application\/json"
+                            },
+                            {
+                                "key": "Accept",
+                                "value": "application\/json"
+                            }
+                        ],
+                        "body": null,
+                        "description": "Requires DC_ADMIN and tenant context."
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ],
+    "auth": {
+        "type": "bearer",
+        "bearer": [
+            {
+                "key": "Authorization",
+                "type": "string"
+            }
+        ]
+    }
+}

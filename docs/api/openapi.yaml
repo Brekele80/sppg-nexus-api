@@ -1,0 +1,1678 @@
+openapi: 3.0.3
+info:
+  title: 'SPPG Nexus API'
+  description: 'Audit-first, multi-tenant procurement ERP API.'
+  version: 1.0.0
+servers:
+  -
+    url: 'http://127.0.0.1:8000'
+tags:
+  -
+    name: Endpoints
+    description: ''
+components:
+  securitySchemes:
+    default:
+      type: http
+      scheme: bearer
+      description: 'Use a Supabase access_token as Bearer token.'
+security:
+  -
+    default: []
+paths:
+  /api/me:
+    get:
+      summary: ''
+      operationId: getApiMe
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  /api/suppliers:
+    get:
+      summary: ''
+      operationId: getApiSuppliers
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  /api/notifications:
+    get:
+      summary: ''
+      operationId: getApiNotifications
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  /api/audit:
+    get:
+      summary: ''
+      operationId: getApiAudit
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  /api/inventory:
+    get:
+      summary: "GET /api/inventory\n(Your existing read-only implementation, unchanged)"
+      operationId: gETapiinventoryYourExistingReadOnlyImplementationUnchanged
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  /api/inventory/movements:
+    get:
+      summary: "GET /api/inventory/movements\n(Your existing implementation, unchanged)"
+      operationId: gETapiinventorymovementsYourExistingImplementationUnchanged
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  /api/inventory/lots:
+    get:
+      summary: "GET /api/inventory/lots\n(Your existing implementation, unchanged)"
+      operationId: gETapiinventorylotsYourExistingImplementationUnchanged
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  '/api/inventory/items/{itemId}/lots':
+    get:
+      summary: "GET /api/inventory/items/{itemId}/lots\n(Your existing implementation, unchanged)"
+      operationId: gETapiinventoryitemsitemIdlotsYourExistingImplementationUnchanged
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: itemId
+        description: ''
+        example: consequatur
+        required: true
+        schema:
+          type: string
+  '/api/pos/{id}':
+    get:
+      summary: ''
+      operationId: getApiPosId
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the po.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/receipts/{gr}':
+    get:
+      summary: 'GET /api/dc/receipts/{gr}'
+      operationId: gETapidcreceiptsgr
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    patch:
+      summary: "PATCH /api/dc/receipts/{gr}\nUpdate GR line quantities while DRAFT only."
+      operationId: pATCHapidcreceiptsgrUpdateGRLineQuantitiesWhileDRAFTOnly
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  description: 'Must have at least 1 items.'
+                  example:
+                    - []
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        description: 'Must be a valid UUID.'
+                        example: 66529e01-d113-3473-8d6f-9e11e09332ea
+                      received_qty:
+                        type: number
+                        description: 'Must be at least 0.'
+                        example: 56
+                      rejected_qty:
+                        type: number
+                        description: 'Must be at least 0.'
+                        example: 16
+                    required:
+                      - id
+                      - received_qty
+                      - rejected_qty
+              required:
+                - items
+    parameters:
+      -
+        in: path
+        name: gr
+        description: ''
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  /api/dc/stock-adjustments:
+    get:
+      summary: 'GET /api/dc/stock-adjustments'
+      operationId: gETapidcstockAdjustments
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                  description: 'Must be a valid UUID.'
+                  example: 66529e01-d113-3473-8d6f-9e11e09332ea
+                  nullable: true
+                status:
+                  type: string
+                  description: ''
+                  example: APPROVED
+                  enum:
+                    - DRAFT
+                    - SUBMITTED
+                    - APPROVED
+                    - POSTED
+                  nullable: true
+                q:
+                  type: string
+                  description: 'Must not be greater than 200 characters.'
+                  example: eopfuudtdsufvyvddqamn
+                  nullable: true
+                limit:
+                  type: integer
+                  description: 'Must be at least 1. Must not be greater than 200.'
+                  example: 8
+                  nullable: true
+    post:
+      summary: 'POST /api/dc/stock-adjustments (create DRAFT)'
+      operationId: pOSTapidcstockAdjustmentscreateDRAFT
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                  description: 'Must be a valid UUID.'
+                  example: 66529e01-d113-3473-8d6f-9e11e09332ea
+                reason:
+                  type: string
+                  description: 'Must not be greater than 2000 characters.'
+                  example: qeopfuudtdsufvyvddqam
+                  nullable: true
+                notes:
+                  type: string
+                  description: 'Must not be greater than 2000 characters.'
+                  example: niihfqcoynlazghdtqtqx
+                  nullable: true
+                items:
+                  type: array
+                  description: 'Must have at least 1 items.'
+                  example:
+                    - []
+                  items:
+                    type: object
+                    properties:
+                      direction:
+                        type: string
+                        description: ''
+                        example: OUT
+                        enum:
+                          - IN
+                          - OUT
+                      item_name:
+                        type: string
+                        description: 'Must not be greater than 255 characters.'
+                        example: mqeopfuudtdsufvyvddqa
+                      unit:
+                        type: string
+                        description: 'Must not be greater than 30 characters.'
+                        example: mniihfqcoynlazghdtqtq
+                        nullable: true
+                      qty:
+                        type: number
+                        description: 'Must be at least 0.001.'
+                        example: 80
+                      expiry_date:
+                        type: string
+                        description: 'Must be a valid date.'
+                        example: '2026-01-18T07:30:28'
+                        nullable: true
+                      unit_cost:
+                        type: number
+                        description: 'Must be at least 0.'
+                        example: 6
+                        nullable: true
+                      currency:
+                        type: string
+                        description: 'Must not be greater than 10 characters.'
+                        example: ajwbpilpm
+                        nullable: true
+                      received_at:
+                        type: string
+                        description: 'Must be a valid date.'
+                        example: '2026-01-18T07:30:28'
+                        nullable: true
+                      preferred_lot_id:
+                        type: string
+                        description: 'Must be a valid UUID.'
+                        example: 99b60756-f4f1-3bfb-adf2-2b1e4ff136ba
+                        nullable: true
+                      remarks:
+                        type: string
+                        description: 'Must not be greater than 2000 characters.'
+                        example: inllwloauydlsmsjuryvo
+                        nullable: true
+                    required:
+                      - direction
+                      - item_name
+                      - qty
+              required:
+                - branch_id
+                - items
+  '/api/dc/stock-adjustments/{id}':
+    get:
+      summary: 'GET /api/dc/stock-adjustments/{id}'
+      operationId: gETapidcstockAdjustmentsid
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the stock adjustment.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/stock-adjustments/{id}/attachments':
+    get:
+      summary: 'List attachments for a stock adjustment.'
+      operationId: listAttachmentsForAStockAdjustment
+      description: 'Requires DC_ADMIN and tenant context.'
+      parameters:
+        -
+          in: header
+          name: X-Company-Id
+          description: ''
+          example: 'required Tenant company UUID.'
+          schema:
+            type: string
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    post:
+      summary: 'Register attachment metadata (file already uploaded to Supabase Storage).'
+      operationId: registerAttachmentMetadatafileAlreadyUploadedToSupabaseStorage
+      description: 'Requires DC_ADMIN and tenant context.'
+      parameters:
+        -
+          in: header
+          name: X-Company-Id
+          description: ''
+          example: 'required Tenant company UUID.'
+          schema:
+            type: string
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_name:
+                  type: string
+                  description: 'Original filename.'
+                  example: test.pdf
+                mime_type:
+                  type: string
+                  description: 'nullable MIME type.'
+                  example: application/pdf
+                  nullable: true
+                file_size:
+                  type: integer
+                  description: 'nullable File size in bytes.'
+                  example: 880355
+                storage_key:
+                  type: string
+                  description: 'Storage key path.'
+                  example: 'companies/{companyId}/stock-adjustments/{docId}/{folder}/test.pdf'
+                public_url:
+                  type: string
+                  description: 'nullable If you choose to store any public url.'
+                  example: null
+                  nullable: true
+              required:
+                - file_name
+                - storage_key
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the stock adjustment.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/stock-adjustments/{id}/attachments/{attId}/download':
+    get:
+      summary: 'Get a short-lived signed download URL for a private attachment.'
+      operationId: getAShortLivedSignedDownloadURLForAPrivateAttachment
+      description: 'Requires DC_ADMIN and tenant context.'
+      parameters:
+        -
+          in: header
+          name: X-Company-Id
+          description: ''
+          example: 'required Tenant company UUID.'
+          schema:
+            type: string
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the stock adjustment.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+      -
+        in: path
+        name: attId
+        description: ''
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  /api/prs:
+    get:
+      summary: ''
+      operationId: getApiPrs
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    post:
+      summary: ''
+      operationId: postApiPrs
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                  description: 'Must be a valid UUID.'
+                  example: 66529e01-d113-3473-8d6f-9e11e09332ea
+                notes:
+                  type: string
+                  description: ''
+                  example: consequatur
+                  nullable: true
+                items:
+                  type: array
+                  description: 'Must have at least 1 items.'
+                  example:
+                    - []
+                  items:
+                    type: object
+                    properties:
+                      item_name:
+                        type: string
+                        description: 'Must not be greater than 255 characters.'
+                        example: vmqeopfuudtdsufvyvddq
+                      unit:
+                        type: string
+                        description: 'Must not be greater than 50 characters.'
+                        example: amniihfqcoynlazghdtqt
+                      qty:
+                        type: number
+                        description: 'Must be at least 0.001.'
+                        example: 56
+                      remarks:
+                        type: string
+                        description: ''
+                        example: consequatur
+                        nullable: true
+                    required:
+                      - item_name
+                      - unit
+                      - qty
+              required:
+                - branch_id
+                - items
+  '/api/prs/{id}':
+    get:
+      summary: ''
+      operationId: getApiPrsId
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the pr.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/rabs/{id}':
+    get:
+      summary: ''
+      operationId: getApiRabsId
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+    put:
+      summary: ''
+      operationId: putApiRabsId
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currency:
+                  type: string
+                  description: 'Must not be greater than 10 characters.'
+                  example: vmqeopfuu
+                  nullable: true
+                line_items:
+                  type: array
+                  description: 'Must have at least 1 items.'
+                  example:
+                    - []
+                  items:
+                    type: object
+                    properties:
+                      item_name:
+                        type: string
+                        description: 'Must not be greater than 255 characters.'
+                        example: vmqeopfuudtdsufvyvddq
+                      unit:
+                        type: string
+                        description: 'Must not be greater than 50 characters.'
+                        example: amniihfqcoynlazghdtqt
+                      qty:
+                        type: number
+                        description: 'Must be at least 0.001.'
+                        example: 56
+                      unit_price:
+                        type: number
+                        description: 'Must be at least 0.'
+                        example: 80
+                    required:
+                      - item_name
+                      - unit
+                      - qty
+                      - unit_price
+              required:
+                - line_items
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the rab.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/notifications/{id}/read':
+    post:
+      summary: ''
+      operationId: postApiNotificationsIdRead
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the notification.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  /api/notifications/read-all:
+    post:
+      summary: ''
+      operationId: postApiNotificationsReadAll
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+  '/api/prs/{id}/submit':
+    post:
+      summary: ''
+      operationId: postApiPrsIdSubmit
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the pr.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  /api/kitchen/issues:
+    post:
+      summary: ''
+      operationId: postApiKitchenIssues
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes:
+                  type: string
+                  description: 'Must not be greater than 2000 characters.'
+                  example: vmqeopfuudtdsufvyvddq
+                  nullable: true
+                items:
+                  type: array
+                  description: 'Must have at least 1 items.'
+                  example:
+                    - []
+                  items:
+                    type: object
+                    properties:
+                      item_name:
+                        type: string
+                        description: 'Must not be greater than 255 characters.'
+                        example: vmqeopfuudtdsufvyvddq
+                      unit:
+                        type: string
+                        description: 'Must not be greater than 30 characters.'
+                        example: amniihfqcoynlazghdtqt
+                        nullable: true
+                      requested_qty:
+                        type: number
+                        description: 'Must be at least 0.001.'
+                        example: 56
+                      remarks:
+                        type: string
+                        description: 'Must not be greater than 2000 characters.'
+                        example: xbajwbpilpmufinllwloa
+                        nullable: true
+                    required:
+                      - item_name
+                      - requested_qty
+              required:
+                - items
+  '/api/kitchen/issues/{id}/submit':
+    post:
+      summary: ''
+      operationId: postApiKitchenIssuesIdSubmit
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the issue.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/prs/{id}/rabs':
+    post:
+      summary: ''
+      operationId: postApiPrsIdRabs
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currency:
+                  type: string
+                  description: 'Must not be greater than 10 characters.'
+                  example: vmqeopfuu
+                  nullable: true
+                line_items:
+                  type: array
+                  description: 'Must have at least 1 items.'
+                  example:
+                    - []
+                  items:
+                    type: object
+                    properties:
+                      item_name:
+                        type: string
+                        description: 'Must not be greater than 255 characters.'
+                        example: vmqeopfuudtdsufvyvddq
+                      unit:
+                        type: string
+                        description: 'Must not be greater than 50 characters.'
+                        example: amniihfqcoynlazghdtqt
+                      qty:
+                        type: number
+                        description: 'Must be at least 0.001.'
+                        example: 56
+                      unit_price:
+                        type: number
+                        description: 'Must be at least 0.'
+                        example: 80
+                    required:
+                      - item_name
+                      - unit
+                      - qty
+                      - unit_price
+              required:
+                - line_items
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the pr.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/rabs/{id}/submit':
+    post:
+      summary: ''
+      operationId: postApiRabsIdSubmit
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the rab.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/rabs/{id}/revise':
+    post:
+      summary: ''
+      operationId: postApiRabsIdRevise
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the rab.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/rabs/{rabId}/po':
+    post:
+      summary: ''
+      operationId: postApiRabsRabIdPo
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                supplier_id:
+                  type: string
+                  description: 'Must be a valid UUID.'
+                  example: 66529e01-d113-3473-8d6f-9e11e09332ea
+                notes:
+                  type: string
+                  description: ''
+                  example: consequatur
+                  nullable: true
+              required:
+                - supplier_id
+    parameters:
+      -
+        in: path
+        name: rabId
+        description: ''
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/pos/{id}/send':
+    post:
+      summary: ''
+      operationId: postApiPosIdSend
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the po.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/rabs/{id}/decisions':
+    post:
+      summary: ''
+      operationId: postApiRabsIdDecisions
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision:
+                  type: string
+                  description: ''
+                  example: reject
+                  enum:
+                    - APPROVE
+                    - REJECT
+                    - approve
+                    - reject
+                reason:
+                  type: string
+                  description: 'Must not be greater than 2000 characters.'
+                  example: mqeopfuudtdsufvyvddqa
+                  nullable: true
+              required:
+                - decision
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the rab.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/accounting/purchase-orders/{id}/payment-proof':
+    post:
+      summary: ''
+      operationId: postApiAccountingPurchaseOrdersIdPaymentProof
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                proof:
+                  type: string
+                  format: binary
+                  description: 'Must be a file. Must not be greater than 5120 kilobytes.'
+                notes:
+                  type: string
+                  description: 'Must not be greater than 2000 characters.'
+                  example: vmqeopfuudtdsufvyvddq
+                  nullable: true
+              required:
+                - proof
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the purchase order.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/supplier/purchase-orders/{id}/confirm-payment':
+    post:
+      summary: ''
+      operationId: postApiSupplierPurchaseOrdersIdConfirmPayment
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the purchase order.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/supplier/pos/{id}/confirm':
+    post:
+      summary: ''
+      operationId: postApiSupplierPosIdConfirm
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the po.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/supplier/pos/{id}/reject':
+    post:
+      summary: ''
+      operationId: postApiSupplierPosIdReject
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: 'Must not be greater than 500 characters.'
+                  example: vmqeopfuudtdsufvyvddq
+              required:
+                - reason
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the po.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/supplier/pos/{id}/delivered':
+    post:
+      summary: ''
+      operationId: postApiSupplierPosIdDelivered
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+                  description: 'Must not be greater than 500 characters.'
+                  example: vmqeopfuudtdsufvyvddq
+                  nullable: true
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the po.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  /api/supplier/pos:
+    get:
+      summary: ''
+      operationId: getApiSupplierPos
+      description: ''
+      parameters: []
+      responses:
+        401:
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: object
+                example:
+                  error:
+                    code: auth_invalid_token
+                    message: 'Invalid token'
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        example: auth_invalid_token
+                      message:
+                        type: string
+                        example: 'Invalid token'
+      tags:
+        - Endpoints
+  '/api/dc/pos/{po}/receipts':
+    post:
+      summary: "POST /api/dc/pos/{po}/receipts\nCreate GR from PO (idempotent via middleware + DB unique if you have it)."
+      operationId: pOSTapidcposporeceiptsCreateGRFromPOidempotentViaMiddleware+DBUniqueIfYouHaveIt
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: po
+        description: 'The po.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/receipts/{gr}/submit':
+    post:
+      summary: 'POST /api/dc/receipts/{gr}/submit'
+      operationId: pOSTapidcreceiptsgrsubmit
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: gr
+        description: ''
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/receipts/{gr}/receive':
+    post:
+      summary: "POST /api/dc/receipts/{gr}/receive\nThis should also be where you post inventory (if your design does it here)."
+      operationId: pOSTapidcreceiptsgrreceiveThisShouldAlsoBeWhereYouPostInventoryifYourDesignDoesItHere
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: gr
+        description: ''
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/issues/{id}/approve':
+    post:
+      summary: ''
+      operationId: postApiDcIssuesIdApprove
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the issue.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/issues/{id}/issue':
+    post:
+      summary: ''
+      operationId: postApiDcIssuesIdIssue
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the issue.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  /api/dc/adjustments:
+    post:
+      summary: "POST /api/dc/adjustments\nBody:\n{\n  \"branch_id\": \"uuid\",\n  \"type\": \"INCREASE|DECREASE\",\n  \"notes\": \"optional\",\n  \"items\": [\n    {\"item_name\":\"Beras\",\"unit\":\"kg\",\"qty_delta\": 5, \"remarks\":\"optional\"}\n  ]\n}"
+      operationId: pOSTapidcadjustmentsBodybranchIduuidtypeINCREASEDECREASEnotesoptionalitemsitemNameBerasunitkgqtyDelta5remarksoptional
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                  description: 'Must be a valid UUID.'
+                  example: 66529e01-d113-3473-8d6f-9e11e09332ea
+                reason:
+                  type: string
+                  description: 'Must not be greater than 2000 characters.'
+                  example: qeopfuudtdsufvyvddqam
+                  nullable: true
+                notes:
+                  type: string
+                  description: 'Must not be greater than 2000 characters.'
+                  example: niihfqcoynlazghdtqtqx
+                  nullable: true
+                type:
+                  type: string
+                  description: "Backward compatibility: accept old field names if present\nold v1: type=INCREASE|DECREASE and items[].qty_delta."
+                  example: consequatur
+                  nullable: true
+                items:
+                  type: array
+                  description: 'Must have at least 1 items.'
+                  example:
+                    - []
+                  items:
+                    type: object
+                    properties:
+                      item_name:
+                        type: string
+                        description: 'Must not be greater than 255 characters.'
+                        example: vmqeopfuudtdsufvyvddq
+                      unit:
+                        type: string
+                        description: 'Must not be greater than 30 characters.'
+                        example: amniihfqcoynlazghdtqt
+                        nullable: true
+                      qty:
+                        type: number
+                        description: "v2 expects qty, direction. We'll map. Must be at least 0.001."
+                        example: 56
+                        nullable: true
+                      direction:
+                        type: string
+                        description: ''
+                        example: consequatur
+                        nullable: true
+                      qty_delta:
+                        type: number
+                        description: 'Must be at least 0.001.'
+                        example: 45
+                        nullable: true
+                      remarks:
+                        type: string
+                        description: 'Must not be greater than 2000 characters.'
+                        example: qeopfuudtdsufvyvddqam
+                        nullable: true
+                      expiry_date:
+                        type: string
+                        description: 'optional v2 fields. Must be a valid date.'
+                        example: '2026-01-18T07:30:28'
+                        nullable: true
+                      unit_cost:
+                        type: number
+                        description: 'Must be at least 0.'
+                        example: 46
+                        nullable: true
+                      currency:
+                        type: string
+                        description: 'Must not be greater than 10 characters.'
+                        example: iihfqcoyn
+                        nullable: true
+                      received_at:
+                        type: string
+                        description: 'Must be a valid date.'
+                        example: '2026-01-18T07:30:28'
+                        nullable: true
+                      preferred_lot_id:
+                        type: string
+                        description: 'Must be a valid UUID.'
+                        example: b5505987-a61d-3f90-937f-a5992ff3fb8c
+                        nullable: true
+                    required:
+                      - item_name
+              required:
+                - branch_id
+                - items
+  '/api/dc/stock-adjustments/{id}/submit':
+    post:
+      summary: 'POST /api/dc/stock-adjustments/{id}/submit'
+      operationId: pOSTapidcstockAdjustmentsidsubmit
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the stock adjustment.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/stock-adjustments/{id}/approve':
+    post:
+      summary: 'POST /api/dc/stock-adjustments/{id}/approve'
+      operationId: pOSTapidcstockAdjustmentsidapprove
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the stock adjustment.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/stock-adjustments/{id}/post':
+    post:
+      summary: 'POST /api/dc/stock-adjustments/{id}/post'
+      operationId: pOSTapidcstockAdjustmentsidpost
+      description: ''
+      parameters: []
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the stock adjustment.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+  '/api/dc/stock-adjustments/{id}/attachments/{attId}':
+    delete:
+      summary: 'Delete attachment metadata (does not delete the blob).'
+      operationId: deleteAttachmentMetadatadoesNotDeleteTheBlob
+      description: 'Requires DC_ADMIN and tenant context.'
+      parameters:
+        -
+          in: header
+          name: X-Company-Id
+          description: ''
+          example: 'required Tenant company UUID.'
+          schema:
+            type: string
+      responses: {  }
+      tags:
+        - Endpoints
+    parameters:
+      -
+        in: path
+        name: id
+        description: 'The ID of the stock adjustment.'
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
+      -
+        in: path
+        name: attId
+        description: ''
+        example: DDaCaCDb-DFDa-aBdf-fddc-bBaAFfedFcca
+        required: true
+        schema:
+          type: string
