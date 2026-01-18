@@ -46,9 +46,9 @@ Route::middleware(['supabase'])->group(function () {
 Route::middleware(['supabase', 'requireCompany'])->group(function () {
 
     /*
-    |--------------------------------------------------------------------------
+    |----------------------------------------------------------------------
     | READ (no idempotency required)
-    |--------------------------------------------------------------------------
+    |----------------------------------------------------------------------
     */
 
     // Suppliers / Notifications
@@ -69,6 +69,11 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     // Read PO
     Route::middleware(['requireRole:CHEF,ACCOUNTING,DC_ADMIN'])->group(function () {
         Route::get('/pos/{id}', [PurchaseOrderController::class, 'show'])->whereUuid('id');
+    });
+
+    // Supplier READ (must not be under idempotency)
+    Route::middleware(['requireRole:SUPPLIER'])->prefix('supplier')->group(function () {
+        Route::get('pos', [SupplierPortalController::class, 'myPurchaseOrders']);
     });
 
     // DC READ
@@ -98,9 +103,9 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     });
 
     /*
-    |--------------------------------------------------------------------------
+    |----------------------------------------------------------------------
     | IDEMPOTENT MUTATION ZONE
-    |--------------------------------------------------------------------------
+    |----------------------------------------------------------------------
     */
     Route::middleware(['idempotency'])->group(function () {
 
@@ -137,15 +142,12 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('purchase-orders/{id}/payment-proof', [AccountingPurchaseOrderPaymentController::class, 'uploadProof'])->whereUuid('id');
         });
 
-        // ===== SUPPLIER
+        // ===== SUPPLIER (mutations)
         Route::middleware(['requireRole:SUPPLIER'])->prefix('supplier')->group(function () {
             Route::post('purchase-orders/{id}/confirm-payment', [SupplierPurchaseOrderPaymentController::class, 'confirmPayment'])->whereUuid('id');
             Route::post('pos/{id}/confirm', [SupplierPortalController::class, 'confirm'])->whereUuid('id');
             Route::post('pos/{id}/reject', [SupplierPortalController::class, 'reject'])->whereUuid('id');
             Route::post('pos/{id}/delivered', [SupplierPortalController::class, 'markDelivered'])->whereUuid('id');
-
-            // Supplier reads kept here for consistency (but still idempotency-wrapped here)
-            Route::get('pos', [SupplierPortalController::class, 'myPurchaseOrders']);
         });
 
         // ===== DC ADMIN (mutations)
