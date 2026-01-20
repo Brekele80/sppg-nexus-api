@@ -29,16 +29,24 @@ class IdempotencyMiddleware
             return response()->json(['error' => ['code' => 'auth_required', 'message' => 'Unauthenticated']], 401);
         }
 
-        // If you ONLY apply this middleware on company-scoped routes, this is fine:
-        $companyId = $request->header('X-Company-Id');
-        if (!$companyId) {
-            return response()->json(['error' => ['code' => 'company_required', 'message' => 'Missing X-Company-Id']], 400);
+        // MUST bind to server-validated tenant context (RequireCompanyContext)
+        $companyId = (string) $request->attributes->get('company_id', '');
+        $companyId = $this->normalizeUuid($companyId);
+
+        if ($companyId === '') {
+            // This indicates a routing/middleware misconfiguration: idempotency applied outside tenant-safe zone.
+            return response()->json([
+                'error' => [
+                    'code' => 'server_misconfig',
+                    'message' => 'Idempotency requires tenant context (company_id attribute missing). Ensure requireCompany runs before idempotency.',
+                ]
+            ], 500);
         }
 
         $userId = (string) $authUser->id;
         $method = $request->method();
 
-        // Canonical path (includes leading slash; stable under /api prefix)
+        // Canonical path (stable; includes /api prefix)
         $path = $request->getPathInfo();
 
         $payload = $this->normalizeForHash([
@@ -72,13 +80,6 @@ class IdempotencyMiddleware
 
             // Completed: replay
             if ($existing->response_status !== null) {
-                $raw = (string) ($existing->response_json ?? '');
-                if ($raw !== '') {
-                    return response($raw, (int) $existing->response_status)
-                        ->header('Content-Type', 'application/json');
-                }
-
-                // fallback legacy path
                 $body = $this->normalizeDbJsonb($existing->response_body);
                 return response()->json($body, (int) $existing->response_status);
             }
@@ -147,16 +148,18 @@ class IdempotencyMiddleware
         try {
             $status = method_exists($response, 'getStatusCode') ? (int) $response->getStatusCode() : 200;
 
-            $raw = null;
-            if (method_exists($response, 'getContent')) {
-                $c = $response->getContent();
-                if (is_string($c) && trim($c) !== '') $raw = $c;
-            }
+            // We store JSON only (API should be JSON).
+            $decoded = $this->extractJsonBody($response);
 
-            $decoded = null;
-            if (is_string($raw)) {
-                $tmp = json_decode($raw, true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) $decoded = $tmp;
+            // If response wasn't JSON, still store a minimal wrapper so replay is deterministic.
+            if ($decoded === null) {
+                $raw = method_exists($response, 'getContent') ? $response->getContent() : null;
+                $decoded = [
+                    'ok' => ($status >= 200 && $status < 300),
+                    '_non_json' => true,
+                    'status' => $status,
+                    'body' => is_string($raw) ? $raw : null,
+                ];
             }
 
             DB::table('idempotency_keys')
@@ -167,8 +170,7 @@ class IdempotencyMiddleware
                 ->where('path', $path)
                 ->update([
                     'response_status' => $status,
-                    'response_json'   => $raw,     // exact replay
-                    'response_body'   => $decoded,  // optional for querying
+                    'response_body'   => $decoded,
                     'updated_at'      => now(),
                 ]);
         } catch (\Throwable $e) {
@@ -192,7 +194,8 @@ class IdempotencyMiddleware
     private function extractJsonBody($response): ?array
     {
         if ($response instanceof \Illuminate\Http\JsonResponse) {
-            return $response->getData(true);
+            $d = $response->getData(true);
+            return is_array($d) ? $d : null;
         }
 
         if (method_exists($response, 'getContent')) {
@@ -256,5 +259,10 @@ class IdempotencyMiddleware
     {
         if ($arr === []) return false;
         return array_keys($arr) !== range(0, count($arr) - 1);
+    }
+
+    private function normalizeUuid(string $uuid): string
+    {
+        return strtolower(trim($uuid));
     }
 }
