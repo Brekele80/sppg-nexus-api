@@ -6,6 +6,7 @@ use App\Exceptions\CrossBranchAccessException;
 use App\Exceptions\InsufficientStockException;
 use App\Support\AuthUser;
 use App\Support\Audit;
+use App\Support\BranchSequence;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -78,7 +79,7 @@ class KitchenOutController extends Controller
 
             // Create header
             $outId = (string) Str::uuid();
-            $outNumber = $this->generateOutNumber($outId);
+            $outNumber = $this->generateOutNumber($branchId);
             $outAt = $data['out_at'] ?? now();
 
             DB::table('kitchen_outs')->insert([
@@ -251,9 +252,13 @@ class KitchenOutController extends Controller
         });
     }
 
-    private function generateOutNumber(string $outId): string
+    private function generateOutNumber(string $branchId): string
     {
-        return 'KO-' . now()->format('Ymd-His') . '-' . strtoupper(substr(str_replace('-', '', $outId), 0, 8));
+        // Must be called inside the same transaction (it uses pg_advisory_xact_lock).
+        $n = BranchSequence::next($branchId, 'KITCHEN_OUT');
+
+        // Example format: KO-20260122-000001
+        return 'KO-' . now()->format('Ymd') . '-' . str_pad((string)$n, 6, '0', STR_PAD_LEFT);
     }
 
     /**
