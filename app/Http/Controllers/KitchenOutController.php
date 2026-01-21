@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\CrossBranchAccessException;
+use App\Exceptions\InsufficientStockException;
 use App\Support\AuthUser;
 use App\Support\Audit;
 use Illuminate\Http\Request;
@@ -14,12 +16,22 @@ class KitchenOutController extends Controller
     /**
      * POST /api/kitchen/out
      * FIFO consumption at lot level.
+     *
+     * Constraints:
+     * - Must THROW inside transaction (never return errors) to force rollback
+     * - Canonical ledger: inventory_movements
+     * - FIFO state: inventory_lots.remaining_qty (consume oldest first)
+     * - inventory_items.on_hand is cached projection; recompute from lots INSIDE TX
+     * - Tenant boundary: company_id via RequireCompanyContext + branches.company_id defense-in-depth
+     * - Mutations behind IdempotencyMiddleware
+     * - Audit signature: Audit::log($request, $action, $entity, $entity_id, $payload)
      */
     public function store(Request $request)
     {
+        // Auth user (your helper)
         $u = AuthUser::get($request);
-        // Role is enforced in route middleware: requireRole:CHEF (optionally DC_ADMIN)
 
+        // Tenant context (your helper; RequireCompanyContext sets request attribute company_id)
         $companyId = AuthUser::requireCompanyContext($request);
 
         $data = $request->validate([
@@ -35,24 +47,18 @@ class KitchenOutController extends Controller
         $branchId = (string) $data['branch_id'];
         $lines = $data['lines'];
 
-        // enforce unique inventory_item_id per request
-        $ids = array_map(fn($l) => (string)$l['inventory_item_id'], $lines);
+        // Enforce unique inventory_item_id per request
+        $ids = array_map(fn ($l) => (string) $l['inventory_item_id'], $lines);
         if (count($ids) !== count(array_unique($ids))) {
             throw ValidationException::withMessages([
                 'lines' => ['lines must contain unique inventory_item_id values.'],
             ]);
         }
 
-        // Branch access check (fast fail)
+        // Pre-transaction branch access fast-fail is OK to "return" (no state written yet)
         $allowed = AuthUser::allowedBranchIds($request);
         if (!in_array($branchId, $allowed, true)) {
-            return response()->json([
-                'error' => [
-                    'code' => 'cross_branch_access',
-                    'message' => 'Branch access denied',
-                    'details' => ['branch_id' => $branchId],
-                ]
-            ], 403);
+            throw new CrossBranchAccessException($branchId, $companyId, 'Branch access denied');
         }
 
         $actorId = (string) $u->id;
@@ -60,19 +66,14 @@ class KitchenOutController extends Controller
 
         return DB::transaction(function () use ($request, $companyId, $branchId, $actorId, $lines, $data, $idempotencyKey) {
 
-            // defense-in-depth: branch belongs to company
+            // Defense-in-depth: branch belongs to company (inside TX)
             $branchOk = DB::table('branches')
                 ->where('id', $branchId)
                 ->where('company_id', $companyId)
                 ->exists();
+
             if (!$branchOk) {
-                return response()->json([
-                    'error' => [
-                        'code' => 'cross_branch_access',
-                        'message' => 'Branch does not belong to company',
-                        'details' => ['branch_id' => $branchId, 'company_id' => $companyId],
-                    ]
-                ], 403);
+                throw new CrossBranchAccessException($branchId, $companyId, 'Branch does not belong to company');
             }
 
             // Create header
@@ -109,7 +110,7 @@ class KitchenOutController extends Controller
             // FIFO consume per line
             foreach ($lines as $ln) {
                 $itemId = (string) $ln['inventory_item_id'];
-                $need = $this->dec3((string) $ln['qty']); // string with 3 decimals
+                $need = $this->dec3((string) $ln['qty']); // string scale(3)
 
                 // Lock inventory_items row
                 $item = DB::selectOne(
@@ -121,18 +122,13 @@ class KitchenOutController extends Controller
                 );
 
                 if (!$item) {
-                    return response()->json([
-                        'error' => [
-                            'code' => 'insufficient_stock',
-                            'message' => 'Item not available in this branch',
-                            'details' => [
-                                'branch_id' => $branchId,
-                                'inventory_item_id' => $itemId,
-                                'requested_qty' => $need,
-                                'available_qty' => '0.000',
-                            ],
-                        ]
-                    ], 409);
+                    throw new InsufficientStockException(
+                        $branchId,
+                        $itemId,
+                        $need,
+                        '0.000',
+                        'Item not available in this branch'
+                    );
                 }
 
                 // Lock FIFO lots
@@ -147,36 +143,31 @@ class KitchenOutController extends Controller
                     [$branchId, $itemId]
                 );
 
-                $available = "0.000";
+                $available = '0.000';
                 foreach ($lots as $lot) {
-                    $available = bcadd($available, $this->dec3((string)$lot->remaining_qty), 3);
+                    $available = bcadd($available, $this->dec3((string) $lot->remaining_qty), 3);
                 }
 
                 if (bccomp($available, $need, 3) < 0) {
-                    return response()->json([
-                        'error' => [
-                            'code' => 'insufficient_stock',
-                            'message' => 'Insufficient stock for FIFO consumption',
-                            'details' => [
-                                'branch_id' => $branchId,
-                                'inventory_item_id' => $itemId,
-                                'requested_qty' => $need,
-                                'available_qty' => $available,
-                            ],
-                        ]
-                    ], 409);
+                    throw new InsufficientStockException(
+                        $branchId,
+                        $itemId,
+                        $need,
+                        $available,
+                        'Insufficient stock for FIFO consumption'
+                    );
                 }
 
                 // Allocate across lots
                 foreach ($lots as $lot) {
-                    if (bccomp($need, "0.000", 3) <= 0) break;
+                    if (bccomp($need, '0.000', 3) <= 0) break;
 
-                    $lotRemaining = $this->dec3((string)$lot->remaining_qty);
-                    if (bccomp($lotRemaining, "0.000", 3) <= 0) continue;
+                    $lotRemaining = $this->dec3((string) $lot->remaining_qty);
+                    if (bccomp($lotRemaining, '0.000', 3) <= 0) continue;
 
                     $take = (bccomp($lotRemaining, $need, 3) <= 0) ? $lotRemaining : $need;
 
-                    // decrement lot
+                    // Decrement lot
                     DB::update(
                         "update inventory_lots
                          set remaining_qty = remaining_qty - ?
@@ -184,20 +175,24 @@ class KitchenOutController extends Controller
                         [$take, $lot->id]
                     );
 
-                    // insert OUT movement (dual-write source_* and ref_*)
+                    // Insert OUT movement (dual-write source_* and ref_*)
                     DB::table('inventory_movements')->insert([
                         'id' => (string) Str::uuid(),
                         'branch_id' => $branchId,
                         'inventory_item_id' => $itemId,
                         'type' => 'OUT',
                         'qty' => $take,
-                        'ref_type' => 'KITCHEN_OUT',
-                        'ref_id' => $outId,
+
+                        'inventory_lot_id' => $lot->id,
+
                         'source_type' => 'KITCHEN_OUT',
                         'source_id' => $outId,
+                        'ref_type' => 'KITCHEN_OUT',
+                        'ref_id' => $outId,
+
                         'actor_id' => $actorId,
                         'note' => $ln['remarks'] ?? null,
-                        'inventory_lot_id' => $lot->id,
+
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
@@ -211,13 +206,14 @@ class KitchenOutController extends Controller
                     $need = bcsub($need, $take, 3);
                 }
 
-                // recompute on_hand from lots (strong invariant)
+                // Recompute on_hand from lots (strong invariant) INSIDE TX
                 $lotsSumRow = DB::selectOne(
                     "select coalesce(sum(remaining_qty), 0) as lots_sum
                      from inventory_lots
                      where branch_id = ? and inventory_item_id = ?",
                     [$branchId, $itemId]
                 );
+
                 $lotsSum = $this->dec3((string) $lotsSumRow->lots_sum);
 
                 DB::update(
@@ -228,7 +224,7 @@ class KitchenOutController extends Controller
                 );
             }
 
-            // Audit: use your established signature
+            // Audit (exact signature)
             Audit::log($request, 'create', 'kitchen_outs', $outId, [
                 'branch_id' => $branchId,
                 'out_number' => $outNumber,
@@ -257,13 +253,15 @@ class KitchenOutController extends Controller
 
     private function generateOutNumber(string $outId): string
     {
-        // Simple, unique-ish. Unique constraint is (branch_id,out_number) so branch separation helps.
         return 'KO-' . now()->format('Ymd-His') . '-' . strtoupper(substr(str_replace('-', '', $outId), 0, 8));
     }
 
+    /**
+     * Normalize decimal to scale(3) string.
+     */
     private function dec3(string $n): string
     {
-        if (!is_numeric($n)) $n = "0";
+        if (!is_numeric($n)) $n = '0';
         $parts = explode('.', $n, 2);
         $int = preg_replace('/[^0-9\-]/', '', $parts[0] ?: '0');
         $dec = preg_replace('/[^0-9]/', '', $parts[1] ?? '0');
