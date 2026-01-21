@@ -22,6 +22,8 @@ use App\Http\Controllers\AuditController;
 use App\Http\Controllers\StockAdjustmentController;
 use App\Http\Controllers\StockAdjustmentAttachmentController;
 
+use App\Http\Controllers\KitchenOutController;
+
 /*
 |--------------------------------------------------------------------------
 | Public
@@ -120,6 +122,11 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
 
             Route::post('/kitchen/issues', [KitchenIssueController::class, 'create']);
             Route::post('/kitchen/issues/{id}/submit', [KitchenIssueController::class, 'submit'])->whereUuid('id');
+        });
+
+        // ===== KITCHEN OUT (FIFO Consumption)
+        Route::middleware(['requireRole:CHEF,DC_ADMIN'])->group(function () {
+            Route::post('/kitchen/out', [KitchenOutController::class, 'store']);
         });
 
         // ===== PURCHASE
