@@ -23,6 +23,9 @@ use App\Http\Controllers\StockAdjustmentController;
 use App\Http\Controllers\StockAdjustmentAttachmentController;
 
 use App\Http\Controllers\KitchenOutController;
+use App\Http\Controllers\BranchController;
+use App\Http\Controllers\InventoryItemController;
+use App\Http\Controllers\InventoryLotController;
 
 /*
 |--------------------------------------------------------------------------
@@ -67,6 +70,12 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     Route::get('/inventory/movements', [InventoryController::class, 'movements']);
     Route::get('/inventory/lots', [InventoryController::class, 'lots']);
     Route::get('/inventory/items/{itemId}/lots', [InventoryController::class, 'lotsByItem']);
+
+    Route::prefix('dc')->group(function () {
+        Route::get('/branches', [BranchController::class, 'index']);
+        Route::get('/inventory-items', [InventoryItemController::class, 'index']);
+        Route::get('/inventory-lots', [InventoryLotController::class, 'index']);
+    });
 
     // Read PO
     Route::middleware(['requireRole:CHEF,ACCOUNTING,DC_ADMIN'])->group(function () {
@@ -169,9 +178,6 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             // Kitchen issues approvals/issue
             Route::post('/issues/{id}/approve', [KitchenIssueController::class, 'approve'])->whereUuid('id');
             Route::post('/issues/{id}/issue', [KitchenIssueController::class, 'issue'])->whereUuid('id');
-
-            // Legacy
-            Route::post('/adjustments', [InventoryController::class, 'adjust']);
 
             // Stock Adjustments document flow
             Route::post('/stock-adjustments', [StockAdjustmentController::class, 'create']);
