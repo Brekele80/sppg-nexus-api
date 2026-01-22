@@ -4,14 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Domain\Inventory\StockAdjustmentPostingService;
 use App\Models\StockAdjustment;
+use App\Support\Audit;
+use App\Support\AuthUser;
+use App\Support\DocumentNo;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-
-use App\Support\Audit;
-use App\Support\AuthUser;
-use App\Support\DocumentNo;
+use Illuminate\Validation\ValidationException;
 
 class StockAdjustmentController extends Controller
 {
@@ -63,8 +63,8 @@ class StockAdjustmentController extends Controller
         if ($q !== '') {
             $query->where(function ($w) use ($q) {
                 $w->where('adjustment_no', 'ilike', "%{$q}%")
-                  ->orWhere('reason', 'ilike', "%{$q}%")
-                  ->orWhere('notes', 'ilike', "%{$q}%");
+                    ->orWhere('reason', 'ilike', "%{$q}%")
+                    ->orWhere('notes', 'ilike', "%{$q}%");
             });
         }
 
@@ -147,6 +147,11 @@ class StockAdjustmentController extends Controller
 
     /**
      * POST /api/dc/stock-adjustments (create DRAFT)
+     *
+     * Multi-tenant / commercial-grade enforcement:
+     * - OUT lines MUST specify items.*.inventory_item_id to prevent SKU drift (Beras NULL vs Beras kg).
+     * - If inventory_item_id is provided, it MUST belong to the same branch and match item_name + unit (if provided).
+     * - preferred_lot_id (if provided) MUST belong to same branch + inventory_item_id (only safe with explicit SKU).
      */
     public function create(Request $request)
     {
@@ -161,10 +166,11 @@ class StockAdjustmentController extends Controller
             'notes'     => 'nullable|string|max:2000',
             'items'     => 'required|array|min:1',
 
-            'items.*.direction' => 'required|string|in:IN,OUT',
-            'items.*.item_name' => 'required|string|max:255',
-            'items.*.unit'      => 'nullable|string|max:30',
-            'items.*.qty'       => 'required|numeric|min:0.001',
+            'items.*.direction'         => 'required|string|in:IN,OUT',
+            'items.*.inventory_item_id' => 'nullable|uuid',
+            'items.*.item_name'         => 'required|string|max:255',
+            'items.*.unit'              => 'nullable|string|max:30',
+            'items.*.qty'               => 'required|numeric|min:0.001',
 
             'items.*.expiry_date'      => 'nullable|date',
             'items.*.unit_cost'        => 'nullable|numeric|min:0',
@@ -174,9 +180,10 @@ class StockAdjustmentController extends Controller
             'items.*.remarks'          => 'nullable|string|max:2000',
         ]);
 
+        // Branch belongs to company (defense-in-depth)
         $branchOk = DB::table('branches')
-            ->where('id', $data['branch_id'])
-            ->where('company_id', $companyId)
+            ->where('id', (string)$data['branch_id'])
+            ->where('company_id', (string)$companyId)
             ->exists();
 
         if (!$branchOk) {
@@ -185,11 +192,106 @@ class StockAdjustmentController extends Controller
             ], 422);
         }
 
+        // Access check (branch is allowed for user)
         $allowed = AuthUser::allowedBranchIds($request);
         if (!in_array((string)$data['branch_id'], $allowed, true)) {
             return response()->json([
                 'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
             ], 403);
+        }
+
+        // Commercial-grade item validation BEFORE writing anything.
+        // - OUT: inventory_item_id required and must match item_name+unit
+        // - IN: inventory_item_id optional; if provided must match item_name+unit
+        // - preferred_lot_id: only allowed when inventory_item_id is provided; must belong to branch+inventory_item_id
+        foreach ($data['items'] as $idx => $it) {
+            $line = $idx + 1;
+
+            $direction = strtoupper(trim((string)($it['direction'] ?? '')));
+            $itemName = trim((string)($it['item_name'] ?? ''));
+            $unit = $it['unit'] ?? null;
+            if (is_string($unit)) {
+                $unit = trim($unit);
+                if ($unit === '') $unit = null;
+            }
+
+            $invId = !empty($it['inventory_item_id']) ? (string)$it['inventory_item_id'] : null;
+
+            if ($direction === 'OUT' && $invId === null) {
+                return response()->json([
+                    'error' => [
+                        'code' => 'validation',
+                        'message' => "items.$line.inventory_item_id is required for OUT lines to prevent SKU mismatch"
+                    ]
+                ], 422);
+            }
+
+            if (!empty($it['preferred_lot_id']) && $invId === null) {
+                return response()->json([
+                    'error' => [
+                        'code' => 'validation',
+                        'message' => "items.$line.preferred_lot_id requires items.$line.inventory_item_id"
+                    ]
+                ], 422);
+            }
+
+            if ($invId !== null) {
+                $inv = DB::table('inventory_items')
+                    ->where('id', $invId)
+                    ->where('branch_id', (string)$data['branch_id'])
+                    ->first(['id', 'item_name', 'unit']);
+
+                if (!$inv) {
+                    return response()->json([
+                        'error' => [
+                            'code' => 'validation',
+                            'message' => "items.$line.inventory_item_id not found in this branch"
+                        ]
+                    ], 422);
+                }
+
+                // item_name must match exactly after trimming
+                if ((string)$inv->item_name !== $itemName) {
+                    return response()->json([
+                        'error' => [
+                            'code' => 'validation',
+                            'message' => "items.$line.item_name mismatch for inventory_item_id (expected: {$inv->item_name})"
+                        ]
+                    ], 422);
+                }
+
+                // unit must match (NULL-safe)
+                $invUnit = $inv->unit !== null ? (string)$inv->unit : null;
+                if (($invUnit ?? null) !== ($unit ?? null)) {
+                    $eu = $invUnit ?? 'NULL';
+                    $uu = $unit ?? 'NULL';
+                    return response()->json([
+                        'error' => [
+                            'code' => 'validation',
+                            'message' => "items.$line.unit mismatch for inventory_item_id (expected: {$eu}, got: {$uu})"
+                        ]
+                    ], 422);
+                }
+
+                // preferred lot must belong to same branch + sku
+                if (!empty($it['preferred_lot_id'])) {
+                    $prefId = (string)$it['preferred_lot_id'];
+                    $prefOk = DB::table('inventory_lots')
+                        ->where('id', $prefId)
+                        ->where('branch_id', (string)$data['branch_id'])
+                        ->where('inventory_item_id', $invId)
+                        ->exists();
+
+                    if (!$prefOk) {
+                        return response()->json([
+                            'error' => [
+                                'code' => 'validation',
+                                'message' => "items.$line.preferred_lot_id not found for this branch + inventory_item_id"
+                            ]
+                        ], 422);
+                    }
+                }
+            }
         }
 
         $attempts = 0;
@@ -200,18 +302,30 @@ class StockAdjustmentController extends Controller
             try {
                 return DB::transaction(function () use ($request, $data, $companyId, $u) {
 
-                    $docId = (string) Str::uuid();
+                    // Defense-in-depth inside TX as well (multi-tenant safety)
+                    $branchOkTx = DB::table('branches')
+                        ->where('id', (string)$data['branch_id'])
+                        ->where('company_id', (string)$companyId)
+                        ->exists();
+
+                    if (!$branchOkTx) {
+                        throw ValidationException::withMessages([
+                            'branch_id' => ['Branch not found in company'],
+                        ]);
+                    }
+
+                    $docId = (string)Str::uuid();
                     $adjNo = DocumentNo::next($companyId, 'stock_adjustments', 'SA', 'adjustment_no');
 
                     DB::table('stock_adjustments')->insert([
                         'id'            => $docId,
-                        'company_id'    => $companyId,
-                        'branch_id'     => (string) $data['branch_id'],
+                        'company_id'    => (string)$companyId,
+                        'branch_id'     => (string)$data['branch_id'],
                         'adjustment_no' => $adjNo,
                         'status'        => 'DRAFT',
                         'reason'        => $data['reason'] ?? null,
                         'notes'         => $data['notes'] ?? null,
-                        'created_by'    => $u->id,
+                        'created_by'    => (string)$u->id,
                         'created_at'    => now(),
                         'updated_at'    => now(),
                     ]);
@@ -227,10 +341,13 @@ class StockAdjustmentController extends Controller
                         }
 
                         DB::table('stock_adjustment_items')->insert([
-                            'id'                  => (string) Str::uuid(),
+                            'id'                  => (string)Str::uuid(),
                             'stock_adjustment_id' => $docId,
                             'line_no'             => $lineNo,
-                            'inventory_item_id'   => null,
+
+                            // Persist explicit SKU pin (critical for OUT and recommended for IN)
+                            'inventory_item_id'   => !empty($it['inventory_item_id']) ? (string)$it['inventory_item_id'] : null,
+
                             'item_name'           => trim((string)$it['item_name']),
                             'unit'                => $unit,
                             'direction'           => strtoupper((string)$it['direction']),
@@ -261,7 +378,7 @@ class StockAdjustmentController extends Controller
                 });
 
             } catch (QueryException $e) {
-                // Only retry unique collision on (company_id, adjustment_no)
+                // Only retry unique collision on adjustment_no (depending on your unique constraint name)
                 $msg = $e->getMessage();
                 $isDup = str_contains($msg, 'stock_adjustments_company_no_unique')
                     || str_contains($msg, 'duplicate key value violates unique constraint');
@@ -269,7 +386,6 @@ class StockAdjustmentController extends Controller
                 if (!$isDup || $attempts >= 5) {
                     throw $e;
                 }
-
                 // retry loop
             }
         }
@@ -297,7 +413,7 @@ class StockAdjustmentController extends Controller
             DB::table('stock_adjustments')->where('id', $id)->update([
                 'status'       => 'SUBMITTED',
                 'submitted_at' => now(),
-                'submitted_by' => $u->id,
+                'submitted_by' => (string)$u->id,
                 'updated_at'   => now(),
             ]);
 
@@ -332,7 +448,7 @@ class StockAdjustmentController extends Controller
             DB::table('stock_adjustments')->where('id', $id)->update([
                 'status'      => 'APPROVED',
                 'approved_at' => now(),
-                'approved_by' => $u->id,
+                'approved_by' => (string)$u->id,
                 'updated_at'  => now(),
             ]);
 
@@ -355,11 +471,13 @@ class StockAdjustmentController extends Controller
         $companyId = AuthUser::requireCompanyContext($request);
 
         $doc = StockAdjustment::query()->where('id', $id)->first();
-        if (!$doc) return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
+        if (!$doc) {
+            return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
+        }
         if ((string)$doc->company_id !== (string)$companyId) {
             return response()->json(['error' => ['code' => 'forbidden', 'message' => 'Forbidden']], 403);
         }
 
-        return response()->json($svc->post($doc, $request));
+        return response()->json(['data' => $svc->post($doc, $request)]);
     }
 }
