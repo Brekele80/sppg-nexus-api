@@ -2,12 +2,13 @@
 
 namespace App\Http\Middleware;
 
+use Carbon\Carbon;
 use Closure;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Illuminate\Database\QueryException;
-use Carbon\Carbon;
 
 class IdempotencyMiddleware
 {
@@ -15,51 +16,53 @@ class IdempotencyMiddleware
 
     public function handle(Request $request, Closure $next)
     {
+        // Only enforce for mutating methods
         if (!in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
             return $next($request);
         }
 
-        $key = trim((string) $request->header('Idempotency-Key', ''));
+        $key = trim((string)$request->header('Idempotency-Key', ''));
+
+        // ENFORCE: missing key must fail (commercial-grade invariant)
         if ($key === '') {
-            return $next($request);
+            return response()->json([
+                'error' => [
+                    'code' => 'idempotency_key_required',
+                    'message' => 'Idempotency-Key header is required for mutation requests',
+                ]
+            ], 422);
         }
 
+        // Must have authenticated user context
         $authUser = $request->attributes->get('auth_user');
         if (!$authUser) {
             return response()->json(['error' => ['code' => 'auth_required', 'message' => 'Unauthenticated']], 401);
         }
 
-        // MUST bind to server-validated tenant context (RequireCompanyContext)
-        $companyId = (string) $request->attributes->get('company_id', '');
-        $companyId = $this->normalizeUuid($companyId);
-
+        // Must bind to server-validated tenant context (RequireCompanyContext)
+        $companyId = $this->normalizeUuid((string)$request->attributes->get('company_id', ''));
         if ($companyId === '') {
-            // This indicates a routing/middleware misconfiguration: idempotency applied outside tenant-safe zone.
+            // This indicates a routing/middleware misconfiguration
             return response()->json([
                 'error' => [
                     'code' => 'server_misconfig',
-                    'message' => 'Idempotency requires tenant context (company_id attribute missing). Ensure requireCompany runs before idempotency.',
+                    'message' => 'Idempotency requires tenant context (company_id missing). Ensure requireCompany runs before idempotency.',
                 ]
             ], 500);
         }
 
-        $userId = (string) $authUser->id;
+        $userId = (string)$authUser->id;
         $method = $request->method();
-
-        // Canonical path (stable; includes /api prefix)
-        $path = $request->getPathInfo();
+        $path   = $request->getPathInfo(); // stable path including /api prefix
 
         $payload = $this->normalizeForHash([
             'query' => $request->query(),
             'body'  => $request->all(),
         ]);
 
-        $requestHash = hash(
-            'sha256',
-            json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-        );
+        $requestHash = hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-        // Look for existing
+        // Read existing row (no lock needed; we use insert + unique constraint as the lock primitive)
         $existing = DB::table('idempotency_keys')
             ->where('company_id', $companyId)
             ->where('key', $key)
@@ -69,7 +72,7 @@ class IdempotencyMiddleware
             ->first();
 
         if ($existing) {
-            if ((string) $existing->request_hash !== (string) $requestHash) {
+            if ((string)$existing->request_hash !== (string)$requestHash) {
                 return response()->json([
                     'error' => [
                         'code' => 'idempotency_conflict',
@@ -78,15 +81,14 @@ class IdempotencyMiddleware
                 ], 409);
             }
 
-            // Completed: replay
+            // Completed: replay cached response
             if ($existing->response_status !== null) {
-                $body = $this->normalizeDbJsonb($existing->response_body);
-                return response()->json($body, (int) $existing->response_status);
+                $body = $this->normalizeDbJson($existing->response_body);
+                return response()->json($body, (int)$existing->response_status);
             }
 
             // In progress: stale lock handling
             $lockedAt = $existing->locked_at ? Carbon::parse($existing->locked_at) : null;
-
             if ($lockedAt && $lockedAt->diffInSeconds(now()) > $this->staleLockSeconds) {
                 $this->deleteKeyRow($companyId, $key, $userId, $method, $path);
                 // continue to reserve a new lock
@@ -100,10 +102,10 @@ class IdempotencyMiddleware
             }
         }
 
-        // Reserve (handle race: unique constraint)
+        // Reserve using unique constraint (race-safe)
         try {
             DB::table('idempotency_keys')->insert([
-                'id'           => (string) Str::uuid(),
+                'id'           => (string)Str::uuid(),
                 'company_id'   => $companyId,
                 'key'          => $key,
                 'user_id'      => $userId,
@@ -115,7 +117,7 @@ class IdempotencyMiddleware
                 'updated_at'   => now(),
             ]);
         } catch (QueryException $e) {
-            // If another request reserved first, re-read and respond accordingly
+            // Another request won the race; re-read and respond deterministically
             $sqlState = $e->errorInfo[0] ?? null;
             if ($sqlState === '23505') {
                 $existing = DB::table('idempotency_keys')
@@ -127,8 +129,8 @@ class IdempotencyMiddleware
                     ->first();
 
                 if ($existing && $existing->response_status !== null) {
-                    $body = $this->normalizeDbJsonb($existing->response_body);
-                    return response()->json($body, (int) $existing->response_status);
+                    $body = $this->normalizeDbJson($existing->response_body);
+                    return response()->json($body, (int)$existing->response_status);
                 }
 
                 return response()->json([
@@ -144,14 +146,12 @@ class IdempotencyMiddleware
 
         $response = $next($request);
 
-        // Persist response (best-effort)
+        // Persist response best-effort (never break the request)
         try {
-            $status = method_exists($response, 'getStatusCode') ? (int) $response->getStatusCode() : 200;
+            $status = method_exists($response, 'getStatusCode') ? (int)$response->getStatusCode() : 200;
 
-            // We store JSON only (API should be JSON).
             $decoded = $this->extractJsonBody($response);
 
-            // If response wasn't JSON, still store a minimal wrapper so replay is deterministic.
             if ($decoded === null) {
                 $raw = method_exists($response, 'getContent') ? $response->getContent() : null;
                 $decoded = [
@@ -162,6 +162,7 @@ class IdempotencyMiddleware
                 ];
             }
 
+            // Ensure JSON serialization for jsonb columns (avoid driver edge cases)
             DB::table('idempotency_keys')
                 ->where('company_id', $companyId)
                 ->where('key', $key)
@@ -170,11 +171,11 @@ class IdempotencyMiddleware
                 ->where('path', $path)
                 ->update([
                     'response_status' => $status,
-                    'response_body'   => $decoded,
+                    'response_body'   => json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                     'updated_at'      => now(),
                 ]);
         } catch (\Throwable $e) {
-            // do not break request
+            // swallow
         }
 
         return $response;
@@ -193,7 +194,7 @@ class IdempotencyMiddleware
 
     private function extractJsonBody($response): ?array
     {
-        if ($response instanceof \Illuminate\Http\JsonResponse) {
+        if ($response instanceof JsonResponse) {
             $d = $response->getData(true);
             return is_array($d) ? $d : null;
         }
@@ -211,7 +212,7 @@ class IdempotencyMiddleware
         return null;
     }
 
-    private function normalizeDbJsonb($value): array
+    private function normalizeDbJson($value): array
     {
         if (is_array($value)) return $value;
 
@@ -241,7 +242,7 @@ class IdempotencyMiddleware
         }
 
         if (is_object($value)) {
-            return $this->normalizeForHash((array) $value);
+            return $this->normalizeForHash((array)$value);
         }
 
         if (is_array($value)) {

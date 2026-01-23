@@ -16,19 +16,17 @@ class StockAdjustmentPostingService
     /**
      * Post an APPROVED stock adjustment into:
      * - inventory_lots (FIFO truth)
-     * - inventory_movements (canonical ledger, signed qty)
+     * - inventory_movements (canonical ledger, signed qty, type IN/OUT only)
      * - inventory_items.on_hand (cached projection recomputed from lots INSIDE TX)
      *
-     * Multi-tenant rules:
-     * - tenant boundary: company_id from request context
-     * - branch must belong to company (defense-in-depth)
-     * - user must have branch access
+     * Ledger invariants:
+     * - inventory_movements.type: IN|OUT only
+     * - inventory_movements.qty : signed scale(3)
+     *     IN  => qty >= 0
+     *     OUT => qty <= 0
      *
-     * Transaction rules:
-     * - MUST throw inside TX to rollback
-     * - lock doc row to prevent double post
-     * - lock inventory_items row per SKU
-     * - lock inventory_lots rows for FIFO consumption
+     * Idempotency:
+     * - If document already POSTED, returns a stable response.
      */
     public function post(StockAdjustment $doc, Request $request): array
     {
@@ -36,35 +34,36 @@ class StockAdjustmentPostingService
         AuthUser::requireRole($u, ['DC_ADMIN']);
 
         $companyId = AuthUser::requireCompanyContext($request);
-        $idempotencyKey = (string)$request->header('Idempotency-Key', '');
+        $idempotencyKey = (string) $request->header('Idempotency-Key', '');
 
         return DB::transaction(function () use ($doc, $request, $u, $companyId, $idempotencyKey) {
 
-            // Lock document row (prevents double-post)
+            // 1) Lock document row (prevents double-post)
             $docRow = DB::table('stock_adjustments')
-                ->where('id', (string)$doc->id)
+                ->where('id', (string) $doc->id)
                 ->lockForUpdate()
                 ->first();
 
             if (!$docRow) {
                 throw new HttpException(404, 'Stock adjustment not found');
             }
-            if ((string)$docRow->company_id !== (string)$companyId) {
+            if ((string) $docRow->company_id !== (string) $companyId) {
                 throw new HttpException(403, 'Forbidden');
             }
 
-            // Idempotent
-            if ((string)$docRow->status === 'POSTED') {
-                return $this->buildResponse((string)$docRow->id);
+            // Idempotent-safe: if already posted, return deterministic response
+            if ((string) $docRow->status === 'POSTED') {
+                return $this->buildResponse((string) $docRow->id);
             }
-            if ((string)$docRow->status !== 'APPROVED') {
+
+            if ((string) $docRow->status !== 'APPROVED') {
                 throw new HttpException(409, 'Document must be APPROVED before posting');
             }
 
-            // Branch belongs to company (defense-in-depth)
+            // 2) Branch belongs to company (defense-in-depth)
             $branchOk = DB::table('branches')
-                ->where('id', (string)$docRow->branch_id)
-                ->where('company_id', (string)$companyId)
+                ->where('id', (string) $docRow->branch_id)
+                ->where('company_id', (string) $companyId)
                 ->exists();
 
             if (!$branchOk) {
@@ -73,15 +72,15 @@ class StockAdjustmentPostingService
                 ]);
             }
 
-            // Branch access
+            // 3) Branch access (user entitlement)
             $allowed = AuthUser::allowedBranchIds($request);
-            if (!in_array((string)$docRow->branch_id, $allowed, true)) {
+            if (!in_array((string) $docRow->branch_id, $allowed, true)) {
                 throw new HttpException(403, 'No access to this branch');
             }
 
-            // Load items (stable order)
+            // 4) Load items in stable order
             $items = DB::table('stock_adjustment_items')
-                ->where('stock_adjustment_id', (string)$docRow->id)
+                ->where('stock_adjustment_id', (string) $docRow->id)
                 ->orderBy('line_no')
                 ->get();
 
@@ -93,46 +92,49 @@ class StockAdjustmentPostingService
 
             $movementIds = [];
             $linesForAudit = [];
+            $recomputedSkus = []; // de-dupe recompute per SKU after OUT distribution if desired
 
             foreach ($items as $it) {
-                $lineNo = (int)$it->line_no;
+                $lineNo = (int) $it->line_no;
 
-                $direction = strtoupper(trim((string)$it->direction)); // IN / OUT
+                $direction = strtoupper(trim((string) $it->direction)); // IN / OUT
                 if (!in_array($direction, ['IN', 'OUT'], true)) {
                     throw ValidationException::withMessages([
                         "items.$lineNo.direction" => ['direction must be IN or OUT'],
                     ]);
                 }
 
-                $qty = $this->dec3((string)$it->qty);
+                $qty = $this->dec3((string) $it->qty);
                 if (bccomp($qty, '0.000', 3) <= 0) {
                     throw ValidationException::withMessages([
                         "items.$lineNo.qty" => ['qty must be > 0'],
                     ]);
                 }
 
-                $itemName = trim((string)$it->item_name);
+                $itemName = trim((string) $it->item_name);
                 if ($itemName === '') {
                     throw ValidationException::withMessages([
                         "items.$lineNo.item_name" => ['item_name is required'],
                     ]);
                 }
 
-                $unit = $it->unit !== null ? trim((string)$it->unit) : null;
-                if ($unit === '') $unit = null;
+                $unit = $it->unit !== null ? trim((string) $it->unit) : null;
+                if ($unit === '') {
+                    $unit = null;
+                }
 
                 // ------------------------------------------------------------
-                // 1) Resolve inventory item (PREFER explicit inventory_item_id)
+                // 5) Resolve inventory item
                 // ------------------------------------------------------------
                 $invItem = null;
 
                 if (!empty($it->inventory_item_id)) {
-                    $invItemId = (string)$it->inventory_item_id;
+                    $invItemId = (string) $it->inventory_item_id;
 
                     // Lock by id + branch (prevents cross-branch spoofing)
                     $invItem = DB::table('inventory_items')
                         ->where('id', $invItemId)
-                        ->where('branch_id', (string)$docRow->branch_id)
+                        ->where('branch_id', (string) $docRow->branch_id)
                         ->lockForUpdate()
                         ->first();
 
@@ -142,9 +144,9 @@ class StockAdjustmentPostingService
                         ]);
                     }
 
-                    // Commercial-grade guard: prevent silent mismatch between provided id and provided name/unit
-                    $expectedName = (string)$invItem->item_name;
-                    $expectedUnit = $invItem->unit !== null ? (string)$invItem->unit : null;
+                    // Guard mismatch (commercial-grade)
+                    $expectedName = (string) $invItem->item_name;
+                    $expectedUnit = $invItem->unit !== null ? (string) $invItem->unit : null;
 
                     if ($expectedName !== $itemName) {
                         throw ValidationException::withMessages([
@@ -161,7 +163,7 @@ class StockAdjustmentPostingService
                 } else {
                     // Resolve by (branch_id, item_name, unit)
                     $invItem = DB::table('inventory_items')
-                        ->where('branch_id', (string)$docRow->branch_id)
+                        ->where('branch_id', (string) $docRow->branch_id)
                         ->where('item_name', $itemName)
                         ->where(function ($q) use ($unit) {
                             if ($unit === null) $q->whereNull('unit');
@@ -171,20 +173,20 @@ class StockAdjustmentPostingService
                         ->first();
                 }
 
-                // OUT must have existing inventory item
+                // OUT requires existing inventory item
                 if (!$invItem && $direction === 'OUT') {
                     throw ValidationException::withMessages([
                         "items.$lineNo.inventory_item_id" => ['OUT line must reference an existing inventory item (provide inventory_item_id or match item_name+unit)'],
                     ]);
                 }
 
-                // IN can create new inventory item only if not found and no inventory_item_id provided
+                // IN can create a new inventory item only if not found and no inventory_item_id provided
                 if (!$invItem && $direction === 'IN') {
                     $invItemId = (string) Str::uuid();
 
                     DB::table('inventory_items')->insert([
                         'id'         => $invItemId,
-                        'branch_id'  => (string)$docRow->branch_id,
+                        'branch_id'  => (string) $docRow->branch_id,
                         'item_name'  => $itemName,
                         'unit'       => $unit,
                         'on_hand'    => '0.000',
@@ -194,7 +196,7 @@ class StockAdjustmentPostingService
 
                     $invItem = DB::table('inventory_items')
                         ->where('id', $invItemId)
-                        ->where('branch_id', (string)$docRow->branch_id)
+                        ->where('branch_id', (string) $docRow->branch_id)
                         ->lockForUpdate()
                         ->first();
 
@@ -205,32 +207,30 @@ class StockAdjustmentPostingService
 
                 // Persist resolved inventory_item_id back to line (traceability)
                 DB::table('stock_adjustment_items')
-                    ->where('id', (string)$it->id)
+                    ->where('id', (string) $it->id)
                     ->update([
-                        'inventory_item_id' => (string)$invItem->id,
+                        'inventory_item_id' => (string) $invItem->id,
                         'updated_at'        => now(),
                     ]);
 
-                // before = sum(lots.remaining_qty) (truth)
-                $before = $this->sumLots((string)$docRow->branch_id, (string)$invItem->id);
+                // Before = sum(lots.remaining_qty) (truth)
+                $before = $this->sumLots((string) $docRow->branch_id, (string) $invItem->id);
 
                 // ------------------------------------------------------------
-                // 2) Apply IN / OUT
+                // 6) Apply IN / OUT
                 // ------------------------------------------------------------
                 if ($direction === 'IN') {
                     $lotId = (string) Str::uuid();
-
-                    // lot_code unique by (branch_id, lot_code)
-                    $lotCode = (string)$docRow->adjustment_no . '-' . str_pad((string)$lineNo, 3, '0', STR_PAD_LEFT);
+                    $lotCode = (string) $docRow->adjustment_no . '-' . str_pad((string) $lineNo, 3, '0', STR_PAD_LEFT);
 
                     $receivedAt = $it->received_at ? $it->received_at : now();
-                    $currency = $it->currency ? (string)$it->currency : 'IDR';
-                    $unitCost = $it->unit_cost !== null ? (string)$it->unit_cost : '0';
+                    $currency   = $it->currency ? (string) $it->currency : 'IDR';
+                    $unitCost   = $it->unit_cost !== null ? (string) $it->unit_cost : '0';
 
                     DB::table('inventory_lots')->insert([
                         'id'                    => $lotId,
-                        'branch_id'             => (string)$docRow->branch_id,
-                        'inventory_item_id'     => (string)$invItem->id,
+                        'branch_id'             => (string) $docRow->branch_id,
+                        'inventory_item_id'     => (string) $invItem->id,
                         'goods_receipt_id'      => null,
                         'goods_receipt_item_id' => null,
                         'lot_code'              => $lotCode,
@@ -244,33 +244,36 @@ class StockAdjustmentPostingService
                         'updated_at'            => now(),
                     ]);
 
+                    // Ledger movement: type IN, qty positive
                     $moveId = (string) Str::uuid();
                     DB::table('inventory_movements')->insert([
                         'id'                => $moveId,
-                        'branch_id'         => (string)$docRow->branch_id,
-                        'inventory_item_id' => (string)$invItem->id,
+                        'branch_id'         => (string) $docRow->branch_id,
+                        'inventory_item_id' => (string) $invItem->id,
                         'type'              => 'IN',
-                        'qty'               => $qty, // signed ledger: IN positive
+                        'qty'               => $qty, // signed +
                         'inventory_lot_id'  => $lotId,
 
                         'source_type'       => 'STOCK_ADJUSTMENT',
-                        'source_id'         => (string)$docRow->id,
+                        'source_id'         => (string) $docRow->id,
                         'ref_type'          => 'stock_adjustments',
-                        'ref_id'            => (string)$docRow->id,
+                        'ref_id'            => (string) $docRow->id,
 
-                        'actor_id'          => (string)$u->id,
+                        // Only keep these if your table has these columns:
+                        'actor_id'          => (string) $u->id,
                         'note'              => $it->remarks ?: $docRow->notes,
+
                         'created_at'        => now(),
                         'updated_at'        => now(),
                     ]);
 
-                    $after = $this->recomputeOnHandFromLots((string)$docRow->branch_id, (string)$invItem->id);
+                    $after = $this->recomputeOnHandFromLots((string) $docRow->branch_id, (string) $invItem->id);
 
                     $movementIds[] = $moveId;
                     $linesForAudit[] = [
                         'line_no'           => $lineNo,
                         'direction'         => 'IN',
-                        'inventory_item_id' => (string)$invItem->id,
+                        'inventory_item_id' => (string) $invItem->id,
                         'item_name'         => $itemName,
                         'unit'              => $unit,
                         'qty'               => $qty,
@@ -284,21 +287,21 @@ class StockAdjustmentPostingService
                     continue;
                 }
 
-                // OUT: FIFO by received_at asc, id asc unless preferred_lot_id is given.
+                // OUT: FIFO consumption by received_at asc, id asc unless preferred_lot_id given
                 $need = $qty;
 
                 $lotQuery = DB::table('inventory_lots')
-                    ->where('branch_id', (string)$docRow->branch_id)
-                    ->where('inventory_item_id', (string)$invItem->id)
+                    ->where('branch_id', (string) $docRow->branch_id)
+                    ->where('inventory_item_id', (string) $invItem->id)
                     ->where('remaining_qty', '>', 0);
 
                 if (!empty($it->preferred_lot_id)) {
-                    $prefId = (string)$it->preferred_lot_id;
+                    $prefId = (string) $it->preferred_lot_id;
 
                     $prefOk = DB::table('inventory_lots')
                         ->where('id', $prefId)
-                        ->where('branch_id', (string)$docRow->branch_id)
-                        ->where('inventory_item_id', (string)$invItem->id)
+                        ->where('branch_id', (string) $docRow->branch_id)
+                        ->where('inventory_item_id', (string) $invItem->id)
                         ->where('remaining_qty', '>', 0)
                         ->exists();
 
@@ -320,34 +323,38 @@ class StockAdjustmentPostingService
                 foreach ($lots as $lot) {
                     if (bccomp($need, '0.000', 3) <= 0) break;
 
-                    $avail = $this->dec3((string)$lot->remaining_qty);
+                    $avail = $this->dec3((string) $lot->remaining_qty);
                     if (bccomp($avail, '0.000', 3) <= 0) continue;
 
                     $take = (bccomp($avail, $need, 3) <= 0) ? $avail : $need;
 
+                    // Update FIFO truth
                     DB::update(
                         "update inventory_lots
                          set remaining_qty = remaining_qty - ?, updated_at = ?
                          where id = ?",
-                        [$take, now(), (string)$lot->id]
+                        [$take, now(), (string) $lot->id]
                     );
 
+                    // Ledger movement: type OUT, qty negative
                     $moveId = (string) Str::uuid();
                     DB::table('inventory_movements')->insert([
                         'id'                => $moveId,
-                        'branch_id'         => (string)$docRow->branch_id,
-                        'inventory_item_id' => (string)$invItem->id,
+                        'branch_id'         => (string) $docRow->branch_id,
+                        'inventory_item_id' => (string) $invItem->id,
                         'type'              => 'OUT',
-                        'qty'               => $take, // signed ledger: OUT negative
-                        'inventory_lot_id'  => (string)$lot->id,
+                        'qty'               => bcmul($take, '-1', 3), // signed -
+                        'inventory_lot_id'  => (string) $lot->id,
 
                         'source_type'       => 'STOCK_ADJUSTMENT',
-                        'source_id'         => (string)$docRow->id,
+                        'source_id'         => (string) $docRow->id,
                         'ref_type'          => 'stock_adjustments',
-                        'ref_id'            => (string)$docRow->id,
+                        'ref_id'            => (string) $docRow->id,
 
-                        'actor_id'          => (string)$u->id,
+                        // Only keep these if your table has these columns:
+                        'actor_id'          => (string) $u->id,
                         'note'              => $it->remarks ?: $docRow->notes,
+
                         'created_at'        => now(),
                         'updated_at'        => now(),
                     ]);
@@ -356,12 +363,12 @@ class StockAdjustmentPostingService
                     $linesForAudit[] = [
                         'line_no'           => $lineNo,
                         'direction'         => 'OUT',
-                        'inventory_item_id' => (string)$invItem->id,
+                        'inventory_item_id' => (string) $invItem->id,
                         'item_name'         => $itemName,
                         'unit'              => $unit,
-                        'qty'               => $take,
-                        'lot_id'            => (string)$lot->id,
-                        'lot_code'          => (string)$lot->lot_code,
+                        'qty'               => $take, // business qty positive
+                        'lot_id'            => (string) $lot->id,
+                        'lot_code'          => (string) $lot->lot_code,
                         'movement_id'       => $moveId,
                     ];
 
@@ -375,7 +382,13 @@ class StockAdjustmentPostingService
                     );
                 }
 
-                $after = $this->recomputeOnHandFromLots((string)$docRow->branch_id, (string)$invItem->id);
+                // recompute cached projection from lots
+                $after = $this->recomputeOnHandFromLots((string) $docRow->branch_id, (string) $invItem->id);
+                $recomputedSkus[] = [
+                    'inventory_item_id' => (string) $invItem->id,
+                    'branch_id' => (string) $docRow->branch_id,
+                    'on_hand_after' => $after,
+                ];
 
                 $linesForAudit[] = [
                     'line_no'        => $lineNo,
@@ -385,42 +398,46 @@ class StockAdjustmentPostingService
                 ];
             }
 
-            // Mark POSTED
+            // 7) Mark POSTED
             DB::table('stock_adjustments')
-                ->where('id', (string)$docRow->id)
+                ->where('id', (string) $docRow->id)
                 ->update([
                     'status'     => 'POSTED',
                     'posted_at'  => now(),
-                    'posted_by'  => (string)$u->id,
+                    'posted_by'  => (string) $u->id,
                     'updated_at' => now(),
                 ]);
 
-            Audit::log($request, 'post', 'stock_adjustments', (string)$docRow->id, [
-                'adjustment_no'   => (string)$docRow->adjustment_no,
-                'branch_id'       => (string)$docRow->branch_id,
+            Audit::log($request, 'post', 'stock_adjustments', (string) $docRow->id, [
+                'adjustment_no'   => (string) $docRow->adjustment_no,
+                'branch_id'       => (string) $docRow->branch_id,
                 'movement_ids'    => $movementIds,
                 'lines'           => $linesForAudit,
                 'idempotency_key' => $idempotencyKey,
             ]);
 
-            return $this->buildResponse((string)$docRow->id);
+            return $this->buildResponse((string) $docRow->id);
         });
     }
 
     private function buildResponse(string $docId): array
     {
         $doc = DB::table('stock_adjustments')->where('id', $docId)->first();
+        if (!$doc) {
+            throw new HttpException(404, 'Stock adjustment not found');
+        }
+
         $items = DB::table('stock_adjustment_items')
             ->where('stock_adjustment_id', $docId)
             ->orderBy('line_no')
             ->get();
 
         return [
-            'id'            => (string)$doc->id,
-            'company_id'    => (string)$doc->company_id,
-            'branch_id'     => (string)$doc->branch_id,
-            'adjustment_no' => (string)$doc->adjustment_no,
-            'status'        => (string)$doc->status,
+            'id'            => (string) $doc->id,
+            'company_id'    => (string) $doc->company_id,
+            'branch_id'     => (string) $doc->branch_id,
+            'adjustment_no' => (string) $doc->adjustment_no,
+            'status'        => (string) $doc->status,
             'posted_at'     => $doc->posted_at,
             'posted_by'     => $doc->posted_by,
             'items'         => $items,
@@ -436,12 +453,9 @@ class StockAdjustmentPostingService
             [$branchId, $inventoryItemId]
         );
 
-        return $this->dec3((string)$row->lots_sum);
+        return $this->dec3((string) ($row->lots_sum ?? '0'));
     }
 
-    /**
-     * Recompute inventory_items.on_hand from sum(inventory_lots.remaining_qty) inside TX.
-     */
     private function recomputeOnHandFromLots(string $branchId, string $inventoryItemId): string
     {
         $sum = $this->sumLots($branchId, $inventoryItemId);
@@ -457,16 +471,30 @@ class StockAdjustmentPostingService
     }
 
     /**
-     * Normalize decimal to scale(3) string.
+     * Normalize decimal to scale(3) string (BC-friendly).
+     * Accepts signed numeric strings.
      */
     private function dec3(string $n): string
     {
-        if (!is_numeric($n)) $n = '0';
+        $n = trim($n);
+        if ($n === '' || !is_numeric($n)) return '0.000';
+
+        $neg = false;
+        if (str_starts_with($n, '-')) {
+            $neg = true;
+            $n = substr($n, 1);
+        }
+
         $parts = explode('.', $n, 2);
-        $int = preg_replace('/[^0-9\-]/', '', $parts[0] ?: '0');
+        $int = preg_replace('/[^0-9]/', '', $parts[0] ?? '0');
+        if ($int === '') $int = '0';
+
         $dec = preg_replace('/[^0-9]/', '', $parts[1] ?? '0');
         $dec = substr(str_pad($dec, 3, '0'), 0, 3);
-        if ($int === '' || $int === '-') $int = '0';
-        return $int . '.' . $dec;
+
+        $out = $int . '.' . $dec;
+
+        // Avoid "-0.000"
+        return ($neg && $out !== '0.000') ? '-' . $out : $out;
     }
 }

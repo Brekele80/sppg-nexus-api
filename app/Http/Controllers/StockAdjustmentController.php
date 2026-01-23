@@ -12,17 +12,18 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class StockAdjustmentController extends Controller
 {
     /**
      * GET /api/dc/stock-adjustments
+     *
+     * READ access: DC_ADMIN + ACCOUNTING (read-only)
      */
     public function index(Request $request)
     {
         $u = AuthUser::get($request);
-
-        // READ access: DC_ADMIN + ACCOUNTING (read-only)
         AuthUser::requireRole($u, ['DC_ADMIN', 'ACCOUNTING']);
 
         $companyId = AuthUser::requireCompanyContext($request);
@@ -30,7 +31,7 @@ class StockAdjustmentController extends Controller
         $allowed = AuthUser::allowedBranchIds($request);
         if (empty($allowed)) {
             return response()->json([
-                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
+                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company'],
             ], 403);
         }
 
@@ -45,14 +46,14 @@ class StockAdjustmentController extends Controller
         $q     = isset($data['q']) ? trim((string)$data['q']) : '';
 
         $query = DB::table('stock_adjustments')
-            ->where('company_id', $companyId)
+            ->where('company_id', (string)$companyId)
             ->whereIn('branch_id', $allowed)
             ->orderByDesc('created_at');
 
         if (!empty($data['branch_id'])) {
             if (!in_array((string)$data['branch_id'], $allowed, true)) {
                 return response()->json([
-                    'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+                    'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch'],
                 ], 403);
             }
             $query->where('branch_id', (string)$data['branch_id']);
@@ -84,7 +85,7 @@ class StockAdjustmentController extends Controller
         ]);
 
         return response()->json([
-            'company_id' => $companyId,
+            'company_id' => (string)$companyId,
             'filters'    => [
                 'branch_id' => $data['branch_id'] ?? null,
                 'status'    => $data['status'] ?? null,
@@ -97,12 +98,12 @@ class StockAdjustmentController extends Controller
 
     /**
      * GET /api/dc/stock-adjustments/{id}
+     *
+     * READ access: DC_ADMIN + ACCOUNTING (read-only)
      */
     public function show(Request $request, string $id)
     {
         $u = AuthUser::get($request);
-
-        // READ access: DC_ADMIN + ACCOUNTING (read-only)
         AuthUser::requireRole($u, ['DC_ADMIN', 'ACCOUNTING']);
 
         $companyId = AuthUser::requireCompanyContext($request);
@@ -110,25 +111,24 @@ class StockAdjustmentController extends Controller
         $allowed = AuthUser::allowedBranchIds($request);
         if (empty($allowed)) {
             return response()->json([
-                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
+                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company'],
             ], 403);
         }
 
         $doc = DB::table('stock_adjustments')->where('id', $id)->first();
-
         if (!$doc) {
             return response()->json([
-                'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found']
+                'error' => ['code' => 'not_found', 'message' => 'Stock adjustment not found'],
             ], 404);
         }
         if ((string)$doc->company_id !== (string)$companyId) {
             return response()->json([
-                'error' => ['code' => 'forbidden', 'message' => 'Forbidden']
+                'error' => ['code' => 'forbidden', 'message' => 'Forbidden'],
             ], 403);
         }
         if (!in_array((string)$doc->branch_id, $allowed, true)) {
             return response()->json([
-                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch'],
             ], 403);
         }
 
@@ -151,6 +151,8 @@ class StockAdjustmentController extends Controller
 
     /**
      * POST /api/dc/stock-adjustments (create DRAFT)
+     *
+     * Mutations: DC_ADMIN only
      */
     public function create(Request $request)
     {
@@ -187,7 +189,7 @@ class StockAdjustmentController extends Controller
 
         if (!$branchOk) {
             return response()->json([
-                'error' => ['code' => 'invalid_branch', 'message' => 'Branch not found in company']
+                'error' => ['code' => 'invalid_branch', 'message' => 'Branch not found in company'],
             ], 422);
         }
 
@@ -195,16 +197,17 @@ class StockAdjustmentController extends Controller
         $allowed = AuthUser::allowedBranchIds($request);
         if (!in_array((string)$data['branch_id'], $allowed, true)) {
             return response()->json([
-                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
+                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch'],
             ], 403);
         }
 
-        // Commercial-grade validations (same as your original)
+        // Commercial-grade validations: prevent SKU mismatch and enforce preferred_lot requires inventory_item_id
         foreach ($data['items'] as $idx => $it) {
             $line = $idx + 1;
 
             $direction = strtoupper(trim((string)($it['direction'] ?? '')));
-            $itemName = trim((string)($it['item_name'] ?? ''));
+            $itemName  = trim((string)($it['item_name'] ?? ''));
+
             $unit = $it['unit'] ?? null;
             if (is_string($unit)) {
                 $unit = trim($unit);
@@ -216,18 +219,18 @@ class StockAdjustmentController extends Controller
             if ($direction === 'OUT' && $invId === null) {
                 return response()->json([
                     'error' => [
-                        'code' => 'validation',
-                        'message' => "items.$line.inventory_item_id is required for OUT lines to prevent SKU mismatch"
-                    ]
+                        'code'    => 'validation',
+                        'message' => "items.$line.inventory_item_id is required for OUT lines to prevent SKU mismatch",
+                    ],
                 ], 422);
             }
 
             if (!empty($it['preferred_lot_id']) && $invId === null) {
                 return response()->json([
                     'error' => [
-                        'code' => 'validation',
-                        'message' => "items.$line.preferred_lot_id requires items.$line.inventory_item_id"
-                    ]
+                        'code'    => 'validation',
+                        'message' => "items.$line.preferred_lot_id requires items.$line.inventory_item_id",
+                    ],
                 ], 422);
             }
 
@@ -240,18 +243,18 @@ class StockAdjustmentController extends Controller
                 if (!$inv) {
                     return response()->json([
                         'error' => [
-                            'code' => 'validation',
-                            'message' => "items.$line.inventory_item_id not found in this branch"
-                        ]
+                            'code'    => 'validation',
+                            'message' => "items.$line.inventory_item_id not found in this branch",
+                        ],
                     ], 422);
                 }
 
                 if ((string)$inv->item_name !== $itemName) {
                     return response()->json([
                         'error' => [
-                            'code' => 'validation',
-                            'message' => "items.$line.item_name mismatch for inventory_item_id (expected: {$inv->item_name})"
-                        ]
+                            'code'    => 'validation',
+                            'message' => "items.$line.item_name mismatch for inventory_item_id (expected: {$inv->item_name})",
+                        ],
                     ], 422);
                 }
 
@@ -261,9 +264,9 @@ class StockAdjustmentController extends Controller
                     $uu = $unit ?? 'NULL';
                     return response()->json([
                         'error' => [
-                            'code' => 'validation',
-                            'message' => "items.$line.unit mismatch for inventory_item_id (expected: {$eu}, got: {$uu})"
-                        ]
+                            'code'    => 'validation',
+                            'message' => "items.$line.unit mismatch for inventory_item_id (expected: {$eu}, got: {$uu})",
+                        ],
                     ], 422);
                 }
 
@@ -278,15 +281,16 @@ class StockAdjustmentController extends Controller
                     if (!$prefOk) {
                         return response()->json([
                             'error' => [
-                                'code' => 'validation',
-                                'message' => "items.$line.preferred_lot_id not found for this branch + inventory_item_id"
-                            ]
+                                'code'    => 'validation',
+                                'message' => "items.$line.preferred_lot_id not found for this branch + inventory_item_id",
+                            ],
                         ], 422);
                     }
                 }
             }
         }
 
+        // Retry for DocumentNo uniqueness collisions
         $attempts = 0;
 
         while (true) {
@@ -365,7 +369,6 @@ class StockAdjustmentController extends Controller
                         'status'        => 'DRAFT',
                     ], 200);
                 });
-
             } catch (QueryException $e) {
                 $msg = $e->getMessage();
                 $isDup = str_contains($msg, 'stock_adjustments_company_no_unique')
@@ -388,14 +391,21 @@ class StockAdjustmentController extends Controller
         $companyId = AuthUser::requireCompanyContext($request);
 
         return DB::transaction(function () use ($request, $id, $companyId, $u) {
+
             $doc = DB::table('stock_adjustments')->where('id', $id)->lockForUpdate()->first();
-            if (!$doc) abort(404, 'Not found');
-            if ((string)$doc->company_id !== (string)$companyId) abort(403, 'Forbidden');
+            if (!$doc) {
+                throw new HttpException(404, 'Not found');
+            }
+            if ((string)$doc->company_id !== (string)$companyId) {
+                throw new HttpException(403, 'Forbidden');
+            }
 
             if ((string)$doc->status === 'SUBMITTED') {
                 return response()->json(['id' => (string)$doc->id, 'status' => 'SUBMITTED']);
             }
-            if ((string)$doc->status !== 'DRAFT') abort(409, 'Only DRAFT can be submitted');
+            if ((string)$doc->status !== 'DRAFT') {
+                throw new HttpException(409, 'Only DRAFT can be submitted');
+            }
 
             DB::table('stock_adjustments')->where('id', $id)->update([
                 'status'       => 'SUBMITTED',
@@ -423,14 +433,21 @@ class StockAdjustmentController extends Controller
         $companyId = AuthUser::requireCompanyContext($request);
 
         return DB::transaction(function () use ($request, $id, $companyId, $u) {
+
             $doc = DB::table('stock_adjustments')->where('id', $id)->lockForUpdate()->first();
-            if (!$doc) abort(404, 'Not found');
-            if ((string)$doc->company_id !== (string)$companyId) abort(403, 'Forbidden');
+            if (!$doc) {
+                throw new HttpException(404, 'Not found');
+            }
+            if ((string)$doc->company_id !== (string)$companyId) {
+                throw new HttpException(403, 'Forbidden');
+            }
 
             if ((string)$doc->status === 'APPROVED') {
                 return response()->json(['id' => (string)$doc->id, 'status' => 'APPROVED']);
             }
-            if ((string)$doc->status !== 'SUBMITTED') abort(409, 'Only SUBMITTED can be approved');
+            if ((string)$doc->status !== 'SUBMITTED') {
+                throw new HttpException(409, 'Only SUBMITTED can be approved');
+            }
 
             DB::table('stock_adjustments')->where('id', $id)->update([
                 'status'      => 'APPROVED',
@@ -451,10 +468,10 @@ class StockAdjustmentController extends Controller
     /**
      * POST /api/dc/stock-adjustments/{id}/post
      *
-     * Fixes:
-     * - Locks doc row (anti double-post)
-     * - Idempotent-safe: if already POSTED, returns OK
-     * - Enforces status = APPROVED only
+     * Note:
+     * - This method ONLY gates status/tenant and delegates ledger work to service.
+     * - Do NOT wrap a second transaction around $svc->post(); the service itself is transactional.
+     *   Wrapping is safe in PG as savepoints, but adds complexity.
      */
     public function post(Request $request, string $id, StockAdjustmentPostingService $svc)
     {
@@ -462,6 +479,7 @@ class StockAdjustmentController extends Controller
         AuthUser::requireRole($u, ['DC_ADMIN']);
         $companyId = AuthUser::requireCompanyContext($request);
 
+        // Lock + validate doc state in a small TX, then call service (which locks again defensively).
         return DB::transaction(function () use ($request, $id, $companyId, $svc) {
 
             $docRow = DB::table('stock_adjustments')
@@ -481,22 +499,22 @@ class StockAdjustmentController extends Controller
                     'data' => [
                         'id'     => (string)$docRow->id,
                         'status' => 'POSTED',
-                    ]
+                    ],
                 ]);
             }
 
             if ((string)$docRow->status !== 'APPROVED') {
                 return response()->json([
-                    'error' => ['code' => 'invalid_status', 'message' => 'Only APPROVED documents can be posted']
+                    'error' => ['code' => 'invalid_status', 'message' => 'Only APPROVED documents can be posted'],
                 ], 409);
             }
 
-            // Use Eloquent model for service
             $doc = StockAdjustment::query()->where('id', $id)->first();
             if (!$doc) {
                 return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
             }
 
+            // Service enforces branch access + locks + recompute on_hand from lots.
             $result = $svc->post($doc, $request);
 
             return response()->json(['data' => $result]);
@@ -527,14 +545,13 @@ class StockAdjustmentController extends Controller
                 return response()->json(['error' => ['code' => 'forbidden', 'message' => 'Forbidden']], 403);
             }
 
-            // idempotent-safe
             if ((string)$doc->status === 'REJECTED') {
                 return response()->json(['id' => (string)$doc->id, 'status' => 'REJECTED']);
             }
 
             if ((string)$doc->status !== 'SUBMITTED') {
                 return response()->json([
-                    'error' => ['code' => 'invalid_status', 'message' => 'Only SUBMITTED documents can be rejected']
+                    'error' => ['code' => 'invalid_status', 'message' => 'Only SUBMITTED documents can be rejected'],
                 ], 409);
             }
 
@@ -558,13 +575,19 @@ class StockAdjustmentController extends Controller
 
     /**
      * POST /api/dc/stock-adjustments/{id}/void
-     * Rule: only POSTED can be voided -> VOIDED via reversal movements (no deletes).
      *
-     * Assumptions (consistent with your ledger rules):
-     * - inventory_movements rows exist for the document posting
-     * - movements store inventory_lot_id for deterministic reversal
-     * - inventory_lots.remaining_qty is canonical FIFO state
-     * - inventory_items.on_hand is a cached projection recomputed inside the same transaction
+     * Production-grade deterministic reversal:
+     * - Uses original inventory_movements (source_type=STOCK_ADJUSTMENT, source_id={id})
+     * - Requires inventory_lot_id on each original movement
+     * - Reverses by applying revQty = -origQty back to the SAME lot (no deletes, no re-FIFO)
+     * - Inserts reversal movement rows:
+     *     source_type = STOCK_ADJUSTMENT_VOID
+     *     ref_type/ref_id link to the original movement row
+     * - Recomputes inventory_items.on_hand from lots (truth) for impacted items
+     *
+     * Canonical rules assumed:
+     * - inventory_movements.qty is signed numeric(12,3): IN positive, OUT negative
+     * - inventory_movements.type is IN/OUT and must match sign (IN => qty>=0, OUT => qty<=0)
      */
     public function void(Request $request, string $id)
     {
@@ -586,106 +609,154 @@ class StockAdjustmentController extends Controller
                 return response()->json(['error' => ['code' => 'forbidden', 'message' => 'Forbidden']], 403);
             }
 
-            // idempotent-safe
             if ((string)$doc->status === 'VOIDED') {
                 return response()->json(['id' => (string)$doc->id, 'status' => 'VOIDED']);
             }
 
             if ((string)$doc->status !== 'POSTED') {
                 return response()->json([
-                    'error' => ['code' => 'invalid_status', 'message' => 'Only POSTED documents can be voided']
+                    'error' => ['code' => 'invalid_status', 'message' => 'Only POSTED documents can be voided'],
                 ], 409);
             }
 
-            // Find original movements posted by this SA.
-            // IMPORTANT: your posting service MUST stamp source_type/source_id consistently.
+            // Original movements for this SA posting
             $origMoves = DB::table('inventory_movements')
                 ->where('source_type', 'STOCK_ADJUSTMENT')
                 ->where('source_id', (string)$id)
                 ->orderBy('created_at', 'asc')
+                ->orderBy('id', 'asc')
                 ->lockForUpdate()
                 ->get();
 
             if ($origMoves->isEmpty()) {
                 return response()->json([
-                    'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: no ledger movements found for this document']
+                    'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: no ledger movements found for this document'],
                 ], 409);
             }
+
+            // Track impacted SKUs so we recompute on_hand once per SKU
+            $impacted = []; // key: branchId|invItemId => ['branch_id'=>..., 'inventory_item_id'=>...]
+            $reversalIds = [];
 
             foreach ($origMoves as $m) {
                 if (empty($m->inventory_lot_id)) {
                     return response()->json([
-                        'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: movement missing inventory_lot_id (deterministic reversal required)']
+                        'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: movement missing inventory_lot_id (deterministic reversal required)'],
                     ], 409);
                 }
 
-                $qty = (float)$m->qty;
-                $reverseType = ((string)$m->type === 'IN') ? 'OUT' : 'IN';
+                $branchId = (string)$m->branch_id;
+                $invItemId = (string)$m->inventory_item_id;
+                $lotId = (string)$m->inventory_lot_id;
 
+                // Signed qty (numeric string); reverse is -qty
+                $origQty = $this->dec3((string)$m->qty);
+                if (bccomp($origQty, '0.000', 3) === 0) {
+                    // No-op movement; skip safely
+                    continue;
+                }
+                $revQty = bcmul($origQty, '-1', 3);
+
+                // Lock lot row and apply deterministic reversal to same lot
                 $lot = DB::table('inventory_lots')
-                    ->where('id', (string)$m->inventory_lot_id)
+                    ->where('id', $lotId)
                     ->lockForUpdate()
-                    ->first(['id', 'remaining_qty', 'branch_id', 'inventory_item_id']);
+                    ->first(['id', 'branch_id', 'inventory_item_id', 'remaining_qty']);
 
                 if (!$lot) {
                     return response()->json([
-                        'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: lot not found']
+                        'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: lot not found'],
                     ], 409);
                 }
 
-                if ($reverseType === 'IN') {
-                    // reverse OUT -> put back to the same lot
-                    DB::table('inventory_lots')
-                        ->where('id', (string)$m->inventory_lot_id)
-                        ->update([
-                            'remaining_qty' => DB::raw('remaining_qty + ' . $qty),
-                            'updated_at'    => now(),
-                        ]);
-                } else {
-                    // reverse IN -> take back from same lot (must have enough remaining)
-                    $remaining = (float)$lot->remaining_qty;
-                    if ($remaining < $qty) {
-                        return response()->json([
-                            'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: insufficient remaining_qty to reverse an IN movement']
-                        ], 409);
-                    }
-
-                    DB::table('inventory_lots')
-                        ->where('id', (string)$m->inventory_lot_id)
-                        ->update([
-                            'remaining_qty' => DB::raw('remaining_qty - ' . $qty),
-                            'updated_at'    => now(),
-                        ]);
+                // Defense-in-depth: lot must match movement context
+                if ((string)$lot->branch_id !== $branchId || (string)$lot->inventory_item_id !== $invItemId) {
+                    return response()->json([
+                        'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: lot context mismatch'],
+                    ], 409);
                 }
 
+                // If revQty is negative, we are reducing remaining_qty. Ensure enough remaining.
+                $currentRemaining = $this->dec3((string)$lot->remaining_qty);
+                if (bccomp($revQty, '0.000', 3) < 0) {
+                    $need = bcmul($revQty, '-1', 3); // positive amount to subtract
+                    if (bccomp($currentRemaining, $need, 3) < 0) {
+                        return response()->json([
+                            'error' => [
+                                'code' => 'cannot_void',
+                                'message' => 'Cannot void: insufficient remaining_qty to reverse movement',
+                                'details' => [
+                                    'lot_id' => $lotId,
+                                    'remaining_qty' => $currentRemaining,
+                                    'needed' => $need,
+                                    'movement_id' => (string)$m->id,
+                                ],
+                            ],
+                        ], 409);
+                    }
+                }
+
+                // Apply: remaining_qty = remaining_qty + revQty (revQty may be + or -)
+                DB::update(
+                    "update inventory_lots set remaining_qty = remaining_qty + ?, updated_at = ? where id = ?",
+                    [$revQty, now(), $lotId]
+                );
+
+                // Determine type that matches signed qty
+                $revType = (bccomp($revQty, '0.000', 3) >= 0) ? 'IN' : 'OUT';
+
+                $revId = (string)Str::uuid();
                 DB::table('inventory_movements')->insert([
-                    'id'               => (string)Str::uuid(),
-                    'branch_id'         => (string)$m->branch_id,
-                    'inventory_item_id' => (string)$m->inventory_item_id,
-                    'type'              => $reverseType,
-                    'qty'               => $m->qty,
-                    'inventory_lot_id'  => (string)$m->inventory_lot_id,
+                    'id'                => $revId,
+                    'branch_id'         => $branchId,
+                    'inventory_item_id' => $invItemId,
+                    'type'              => $revType,
+                    'qty'               => $revQty,
+                    'inventory_lot_id'  => $lotId,
+
                     'source_type'       => 'STOCK_ADJUSTMENT_VOID',
                     'source_id'         => (string)$id,
                     'ref_type'          => 'inventory_movements',
                     'ref_id'            => (string)$m->id,
+
+                    'actor_id'          => (string)$u->id,
+                    'note'              => 'VOID: ' . (string)$data['reason'],
+
                     'created_at'        => now(),
                     'updated_at'        => now(),
                 ]);
 
-                // Recompute cached on_hand projection from lots (canonical)
-                $onHand = DB::table('inventory_lots')
-                    ->where('branch_id', (string)$m->branch_id)
-                    ->where('inventory_item_id', (string)$m->inventory_item_id)
-                    ->sum('remaining_qty');
+                $reversalIds[] = $revId;
 
-                DB::table('inventory_items')
-                    ->where('branch_id', (string)$m->branch_id)
-                    ->where('id', (string)$m->inventory_item_id)
-                    ->update([
-                        'on_hand'    => $onHand,
-                        'updated_at' => now(),
-                    ]);
+                $k = $branchId . '|' . $invItemId;
+                $impacted[$k] = ['branch_id' => $branchId, 'inventory_item_id' => $invItemId];
+            }
+
+            // Recompute on_hand from lots for impacted items (canonical projection)
+            $recomputed = [];
+            foreach ($impacted as $row) {
+                $branchId = $row['branch_id'];
+                $invItemId = $row['inventory_item_id'];
+
+                $sumRow = DB::selectOne(
+                    "select coalesce(sum(remaining_qty), 0) as lots_sum
+                     from inventory_lots
+                     where branch_id = ? and inventory_item_id = ?",
+                    [$branchId, $invItemId]
+                );
+
+                $onHand = $this->dec3((string)$sumRow->lots_sum);
+
+                DB::update(
+                    "update inventory_items set on_hand = ?, updated_at = ? where id = ? and branch_id = ?",
+                    [$onHand, now(), $invItemId, $branchId]
+                );
+
+                $recomputed[] = [
+                    'branch_id' => $branchId,
+                    'inventory_item_id' => $invItemId,
+                    'on_hand' => $onHand,
+                ];
             }
 
             DB::table('stock_adjustments')->where('id', (string)$id)->update([
@@ -699,11 +770,41 @@ class StockAdjustmentController extends Controller
             Audit::log($request, 'void', 'stock_adjustments', (string)$doc->id, [
                 'adjustment_no'   => (string)$doc->adjustment_no,
                 'reason'          => (string)$data['reason'],
-                'reversed_count'  => $origMoves->count(),
+                'original_moves'  => $origMoves->count(),
+                'reversal_ids'    => $reversalIds,
+                'recomputed'      => $recomputed,
                 'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
             ]);
 
-            return response()->json(['id' => (string)$doc->id, 'status' => 'VOIDED']);
+            return response()->json([
+                'id'     => (string)$doc->id,
+                'status' => 'VOIDED',
+            ]);
         });
+    }
+
+    /**
+     * Normalize decimal to scale(3) string (safe for signed numeric strings).
+     */
+    private function dec3(string $n): string
+    {
+        $n = trim($n);
+        if ($n === '' || !is_numeric($n)) return '0.000';
+
+        $neg = false;
+        if (str_starts_with($n, '-')) {
+            $neg = true;
+            $n = substr($n, 1);
+        }
+
+        $parts = explode('.', $n, 2);
+        $int = preg_replace('/[^0-9]/', '', $parts[0] ?? '0');
+        if ($int === '') $int = '0';
+
+        $dec = preg_replace('/[^0-9]/', '', $parts[1] ?? '0');
+        $dec = substr(str_pad($dec, 3, '0'), 0, 3);
+
+        $out = $int . '.' . $dec;
+        return $neg && $out !== '0.000' ? '-' . $out : $out;
     }
 }

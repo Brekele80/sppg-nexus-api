@@ -89,14 +89,11 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
 
     // DC READ
     Route::middleware(['requireRole:DC_ADMIN'])->prefix('dc')->group(function () {
-        // Goods Receipt read
         Route::get('/receipts/{gr}', [DcReceiptController::class, 'show'])->whereUuid('gr');
 
-        // Stock Adjustments read
         Route::get('/stock-adjustments', [StockAdjustmentController::class, 'index']);
         Route::get('/stock-adjustments/{id}', [StockAdjustmentController::class, 'show'])->whereUuid('id');
 
-        // Attachments read
         Route::get('/stock-adjustments/{id}/attachments', [StockAdjustmentAttachmentController::class, 'index'])
             ->whereUuid('id');
 
@@ -110,7 +107,9 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
         Route::get('/prs', [PurchaseRequestController::class, 'index']);
         Route::get('/prs/{id}', [PurchaseRequestController::class, 'show'])->whereUuid('id');
         Route::get('/rabs/{id}', [RabController::class, 'show'])->whereUuid('id');
-        Route::put('/rabs/{id}', [RabController::class, 'updateDraft'])->whereUuid('id');
+
+        // IMPORTANT: this is a mutation, moved to idempotency zone below
+        // Route::put('/rabs/{id}', [RabController::class, 'updateDraft'])->whereUuid('id');
     });
 
     /*
@@ -120,11 +119,9 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     */
     Route::middleware(['idempotency'])->group(function () {
 
-        // ===== Notifications
         Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->whereUuid('id');
         Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
 
-        // ===== CHEF
         Route::middleware(['requireRole:CHEF'])->group(function () {
             Route::post('/prs', [PurchaseRequestController::class, 'store']);
             Route::post('/prs/{id}/submit', [PurchaseRequestController::class, 'submit'])->whereUuid('id');
@@ -133,32 +130,30 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('/kitchen/issues/{id}/submit', [KitchenIssueController::class, 'submit'])->whereUuid('id');
         });
 
-        // ===== KITCHEN OUT (FIFO Consumption)
         Route::middleware(['requireRole:CHEF,DC_ADMIN'])->group(function () {
             Route::post('/kitchen/out', [KitchenOutController::class, 'store']);
         });
 
-        // ===== PURCHASE
         Route::middleware(['requireRole:PURCHASE_CABANG'])->group(function () {
             Route::post('/prs/{id}/rabs', [RabController::class, 'createForPr'])->whereUuid('id');
             Route::post('/rabs/{id}/submit', [RabController::class, 'submit'])->whereUuid('id');
             Route::post('/rabs/{id}/revise', [RabController::class, 'revise'])->whereUuid('id');
 
+            // Moved here: mutation must be idempotent
+            Route::put('/rabs/{id}', [RabController::class, 'updateDraft'])->whereUuid('id');
+
             Route::post('/rabs/{rabId}/po', [PurchaseOrderController::class, 'createFromApprovedRab'])->whereUuid('rabId');
             Route::post('/pos/{id}/send', [PurchaseOrderController::class, 'sendToSupplier'])->whereUuid('id');
         });
 
-        // ===== DECISIONS
         Route::middleware(['requireRole:KA_SPPG,ACCOUNTING,DC_ADMIN'])->group(function () {
             Route::post('/rabs/{id}/decisions', [RabDecisionController::class, 'store'])->whereUuid('id');
         });
 
-        // ===== ACCOUNTING
         Route::middleware(['requireRole:ACCOUNTING'])->prefix('accounting')->group(function () {
             Route::post('purchase-orders/{id}/payment-proof', [AccountingPurchaseOrderPaymentController::class, 'uploadProof'])->whereUuid('id');
         });
 
-        // ===== SUPPLIER (mutations)
         Route::middleware(['requireRole:SUPPLIER'])->prefix('supplier')->group(function () {
             Route::post('purchase-orders/{id}/confirm-payment', [SupplierPurchaseOrderPaymentController::class, 'confirmPayment'])->whereUuid('id');
             Route::post('pos/{id}/confirm', [SupplierPortalController::class, 'confirm'])->whereUuid('id');
@@ -166,20 +161,17 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('pos/{id}/delivered', [SupplierPortalController::class, 'markDelivered'])->whereUuid('id');
         });
 
-        // ===== DC ADMIN (mutations)
-        Route::middleware(['requireRole:DC_ADMIN,ACCOUNTING'])->prefix('dc')->group(function () {
+        // DC operational writes: DC_ADMIN only (recommended)
+        Route::middleware(['requireRole:DC_ADMIN'])->prefix('dc')->group(function () {
 
-            // Goods Receipt workflow
             Route::post('/pos/{po}/receipts', [DcReceiptController::class, 'createFromPo'])->whereUuid('po');
             Route::patch('/receipts/{gr}', [DcReceiptController::class, 'update'])->whereUuid('gr');
             Route::post('/receipts/{gr}/submit', [DcReceiptController::class, 'submit'])->whereUuid('gr');
             Route::post('/receipts/{gr}/receive', [DcReceiptController::class, 'receive'])->whereUuid('gr');
 
-            // Kitchen issues approvals/issue
             Route::post('/issues/{id}/approve', [KitchenIssueController::class, 'approve'])->whereUuid('id');
             Route::post('/issues/{id}/issue', [KitchenIssueController::class, 'issue'])->whereUuid('id');
 
-            // Stock Adjustments document flow
             Route::post('/stock-adjustments', [StockAdjustmentController::class, 'create']);
             Route::post('/stock-adjustments/{id}/submit', [StockAdjustmentController::class, 'submit'])->whereUuid('id');
             Route::post('/stock-adjustments/{id}/approve', [StockAdjustmentController::class, 'approve'])->whereUuid('id');
@@ -187,7 +179,6 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('/stock-adjustments/{id}/reject', [StockAdjustmentController::class, 'reject'])->whereUuid('id');
             Route::post('/stock-adjustments/{id}/void', [StockAdjustmentController::class, 'void'])->whereUuid('id');
 
-            // Attachments mutations (metadata only)
             Route::post('/stock-adjustments/{id}/attachments', [StockAdjustmentAttachmentController::class, 'store'])
                 ->whereUuid('id');
 
