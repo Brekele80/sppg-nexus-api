@@ -338,7 +338,7 @@ class StockAdjustmentPostingService
                         'branch_id'         => (string)$docRow->branch_id,
                         'inventory_item_id' => (string)$invItem->id,
                         'type'              => 'OUT',
-                        'qty'               => bcmul($take, '-1', 3), // signed ledger: OUT negative
+                        'qty'               => $take, // signed ledger: OUT negative
                         'inventory_lot_id'  => (string)$lot->id,
 
                         'source_type'       => 'STOCK_ADJUSTMENT',
