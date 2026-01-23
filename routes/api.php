@@ -167,7 +167,7 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
         });
 
         // ===== DC ADMIN (mutations)
-        Route::middleware(['requireRole:DC_ADMIN'])->prefix('dc')->group(function () {
+        Route::middleware(['requireRole:DC_ADMIN,ACCOUNTING'])->prefix('dc')->group(function () {
 
             // Goods Receipt workflow
             Route::post('/pos/{po}/receipts', [DcReceiptController::class, 'createFromPo'])->whereUuid('po');
@@ -184,6 +184,8 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('/stock-adjustments/{id}/submit', [StockAdjustmentController::class, 'submit'])->whereUuid('id');
             Route::post('/stock-adjustments/{id}/approve', [StockAdjustmentController::class, 'approve'])->whereUuid('id');
             Route::post('/stock-adjustments/{id}/post', [StockAdjustmentController::class, 'post'])->whereUuid('id');
+            Route::post('/stock-adjustments/{id}/reject', [StockAdjustmentController::class, 'reject'])->whereUuid('id');
+            Route::post('/stock-adjustments/{id}/void', [StockAdjustmentController::class, 'void'])->whereUuid('id');
 
             // Attachments mutations (metadata only)
             Route::post('/stock-adjustments/{id}/attachments', [StockAdjustmentAttachmentController::class, 'store'])

@@ -249,7 +249,7 @@ class StockAdjustmentPostingService
                         'id'                => $moveId,
                         'branch_id'         => (string)$docRow->branch_id,
                         'inventory_item_id' => (string)$invItem->id,
-                        'type'              => 'ADJUSTMENT_IN',
+                        'type'              => 'IN',
                         'qty'               => $qty, // signed ledger: IN positive
                         'inventory_lot_id'  => $lotId,
 
@@ -337,7 +337,7 @@ class StockAdjustmentPostingService
                         'id'                => $moveId,
                         'branch_id'         => (string)$docRow->branch_id,
                         'inventory_item_id' => (string)$invItem->id,
-                        'type'              => 'ADJUSTMENT_OUT',
+                        'type'              => 'OUT',
                         'qty'               => bcmul($take, '-1', 3), // signed ledger: OUT negative
                         'inventory_lot_id'  => (string)$lot->id,
 

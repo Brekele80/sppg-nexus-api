@@ -21,7 +21,9 @@ class StockAdjustmentController extends Controller
     public function index(Request $request)
     {
         $u = AuthUser::get($request);
-        AuthUser::requireRole($u, ['DC_ADMIN']);
+
+        // READ access: DC_ADMIN + ACCOUNTING (read-only)
+        AuthUser::requireRole($u, ['DC_ADMIN', 'ACCOUNTING']);
 
         $companyId = AuthUser::requireCompanyContext($request);
 
@@ -34,7 +36,7 @@ class StockAdjustmentController extends Controller
 
         $data = $request->validate([
             'branch_id' => 'nullable|uuid',
-            'status'    => 'nullable|string|in:DRAFT,SUBMITTED,APPROVED,POSTED',
+            'status'    => 'nullable|string|in:DRAFT,SUBMITTED,APPROVED,POSTED,REJECTED,VOIDED',
             'q'         => 'nullable|string|max:200',
             'limit'     => 'nullable|integer|min:1|max:200',
         ]);
@@ -99,7 +101,9 @@ class StockAdjustmentController extends Controller
     public function show(Request $request, string $id)
     {
         $u = AuthUser::get($request);
-        AuthUser::requireRole($u, ['DC_ADMIN']);
+
+        // READ access: DC_ADMIN + ACCOUNTING (read-only)
+        AuthUser::requireRole($u, ['DC_ADMIN', 'ACCOUNTING']);
 
         $companyId = AuthUser::requireCompanyContext($request);
 
@@ -147,11 +151,6 @@ class StockAdjustmentController extends Controller
 
     /**
      * POST /api/dc/stock-adjustments (create DRAFT)
-     *
-     * Multi-tenant / commercial-grade enforcement:
-     * - OUT lines MUST specify items.*.inventory_item_id to prevent SKU drift (Beras NULL vs Beras kg).
-     * - If inventory_item_id is provided, it MUST belong to the same branch and match item_name + unit (if provided).
-     * - preferred_lot_id (if provided) MUST belong to same branch + inventory_item_id (only safe with explicit SKU).
      */
     public function create(Request $request)
     {
@@ -200,10 +199,7 @@ class StockAdjustmentController extends Controller
             ], 403);
         }
 
-        // Commercial-grade item validation BEFORE writing anything.
-        // - OUT: inventory_item_id required and must match item_name+unit
-        // - IN: inventory_item_id optional; if provided must match item_name+unit
-        // - preferred_lot_id: only allowed when inventory_item_id is provided; must belong to branch+inventory_item_id
+        // Commercial-grade validations (same as your original)
         foreach ($data['items'] as $idx => $it) {
             $line = $idx + 1;
 
@@ -250,7 +246,6 @@ class StockAdjustmentController extends Controller
                     ], 422);
                 }
 
-                // item_name must match exactly after trimming
                 if ((string)$inv->item_name !== $itemName) {
                     return response()->json([
                         'error' => [
@@ -260,7 +255,6 @@ class StockAdjustmentController extends Controller
                     ], 422);
                 }
 
-                // unit must match (NULL-safe)
                 $invUnit = $inv->unit !== null ? (string)$inv->unit : null;
                 if (($invUnit ?? null) !== ($unit ?? null)) {
                     $eu = $invUnit ?? 'NULL';
@@ -273,7 +267,6 @@ class StockAdjustmentController extends Controller
                     ], 422);
                 }
 
-                // preferred lot must belong to same branch + sku
                 if (!empty($it['preferred_lot_id'])) {
                     $prefId = (string)$it['preferred_lot_id'];
                     $prefOk = DB::table('inventory_lots')
@@ -302,7 +295,6 @@ class StockAdjustmentController extends Controller
             try {
                 return DB::transaction(function () use ($request, $data, $companyId, $u) {
 
-                    // Defense-in-depth inside TX as well (multi-tenant safety)
                     $branchOkTx = DB::table('branches')
                         ->where('id', (string)$data['branch_id'])
                         ->where('company_id', (string)$companyId)
@@ -344,10 +336,7 @@ class StockAdjustmentController extends Controller
                             'id'                  => (string)Str::uuid(),
                             'stock_adjustment_id' => $docId,
                             'line_no'             => $lineNo,
-
-                            // Persist explicit SKU pin (critical for OUT and recommended for IN)
                             'inventory_item_id'   => !empty($it['inventory_item_id']) ? (string)$it['inventory_item_id'] : null,
-
                             'item_name'           => trim((string)$it['item_name']),
                             'unit'                => $unit,
                             'direction'           => strtoupper((string)$it['direction']),
@@ -378,7 +367,6 @@ class StockAdjustmentController extends Controller
                 });
 
             } catch (QueryException $e) {
-                // Only retry unique collision on adjustment_no (depending on your unique constraint name)
                 $msg = $e->getMessage();
                 $isDup = str_contains($msg, 'stock_adjustments_company_no_unique')
                     || str_contains($msg, 'duplicate key value violates unique constraint');
@@ -386,7 +374,6 @@ class StockAdjustmentController extends Controller
                 if (!$isDup || $attempts >= 5) {
                     throw $e;
                 }
-                // retry loop
             }
         }
     }
@@ -463,6 +450,11 @@ class StockAdjustmentController extends Controller
 
     /**
      * POST /api/dc/stock-adjustments/{id}/post
+     *
+     * Fixes:
+     * - Locks doc row (anti double-post)
+     * - Idempotent-safe: if already POSTED, returns OK
+     * - Enforces status = APPROVED only
      */
     public function post(Request $request, string $id, StockAdjustmentPostingService $svc)
     {
@@ -470,14 +462,248 @@ class StockAdjustmentController extends Controller
         AuthUser::requireRole($u, ['DC_ADMIN']);
         $companyId = AuthUser::requireCompanyContext($request);
 
-        $doc = StockAdjustment::query()->where('id', $id)->first();
-        if (!$doc) {
-            return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
-        }
-        if ((string)$doc->company_id !== (string)$companyId) {
-            return response()->json(['error' => ['code' => 'forbidden', 'message' => 'Forbidden']], 403);
-        }
+        return DB::transaction(function () use ($request, $id, $companyId, $svc) {
 
-        return response()->json(['data' => $svc->post($doc, $request)]);
+            $docRow = DB::table('stock_adjustments')
+                ->where('id', $id)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$docRow) {
+                return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
+            }
+            if ((string)$docRow->company_id !== (string)$companyId) {
+                return response()->json(['error' => ['code' => 'forbidden', 'message' => 'Forbidden']], 403);
+            }
+
+            if ((string)$docRow->status === 'POSTED') {
+                return response()->json([
+                    'data' => [
+                        'id'     => (string)$docRow->id,
+                        'status' => 'POSTED',
+                    ]
+                ]);
+            }
+
+            if ((string)$docRow->status !== 'APPROVED') {
+                return response()->json([
+                    'error' => ['code' => 'invalid_status', 'message' => 'Only APPROVED documents can be posted']
+                ], 409);
+            }
+
+            // Use Eloquent model for service
+            $doc = StockAdjustment::query()->where('id', $id)->first();
+            if (!$doc) {
+                return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
+            }
+
+            $result = $svc->post($doc, $request);
+
+            return response()->json(['data' => $result]);
+        });
+    }
+
+    /**
+     * POST /api/dc/stock-adjustments/{id}/reject
+     * Rule: only SUBMITTED can be rejected -> REJECTED
+     */
+    public function reject(Request $request, string $id)
+    {
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['DC_ADMIN']);
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        $data = $request->validate([
+            'reason' => 'required|string|min:3|max:2000',
+        ]);
+
+        return DB::transaction(function () use ($request, $id, $companyId, $u, $data) {
+
+            $doc = DB::table('stock_adjustments')->where('id', $id)->lockForUpdate()->first();
+            if (!$doc) {
+                return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
+            }
+            if ((string)$doc->company_id !== (string)$companyId) {
+                return response()->json(['error' => ['code' => 'forbidden', 'message' => 'Forbidden']], 403);
+            }
+
+            // idempotent-safe
+            if ((string)$doc->status === 'REJECTED') {
+                return response()->json(['id' => (string)$doc->id, 'status' => 'REJECTED']);
+            }
+
+            if ((string)$doc->status !== 'SUBMITTED') {
+                return response()->json([
+                    'error' => ['code' => 'invalid_status', 'message' => 'Only SUBMITTED documents can be rejected']
+                ], 409);
+            }
+
+            DB::table('stock_adjustments')->where('id', $id)->update([
+                'status'        => 'REJECTED',
+                'rejected_at'   => now(),
+                'rejected_by'   => (string)$u->id,
+                'reject_reason' => (string)$data['reason'],
+                'updated_at'    => now(),
+            ]);
+
+            Audit::log($request, 'reject', 'stock_adjustments', (string)$doc->id, [
+                'adjustment_no'   => (string)$doc->adjustment_no,
+                'reason'          => (string)$data['reason'],
+                'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
+            ]);
+
+            return response()->json(['id' => (string)$doc->id, 'status' => 'REJECTED']);
+        });
+    }
+
+    /**
+     * POST /api/dc/stock-adjustments/{id}/void
+     * Rule: only POSTED can be voided -> VOIDED via reversal movements (no deletes).
+     *
+     * Assumptions (consistent with your ledger rules):
+     * - inventory_movements rows exist for the document posting
+     * - movements store inventory_lot_id for deterministic reversal
+     * - inventory_lots.remaining_qty is canonical FIFO state
+     * - inventory_items.on_hand is a cached projection recomputed inside the same transaction
+     */
+    public function void(Request $request, string $id)
+    {
+        $u = AuthUser::get($request);
+        AuthUser::requireRole($u, ['DC_ADMIN']);
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        $data = $request->validate([
+            'reason' => 'required|string|min:3|max:2000',
+        ]);
+
+        return DB::transaction(function () use ($request, $id, $companyId, $u, $data) {
+
+            $doc = DB::table('stock_adjustments')->where('id', $id)->lockForUpdate()->first();
+            if (!$doc) {
+                return response()->json(['error' => ['code' => 'not_found', 'message' => 'Not found']], 404);
+            }
+            if ((string)$doc->company_id !== (string)$companyId) {
+                return response()->json(['error' => ['code' => 'forbidden', 'message' => 'Forbidden']], 403);
+            }
+
+            // idempotent-safe
+            if ((string)$doc->status === 'VOIDED') {
+                return response()->json(['id' => (string)$doc->id, 'status' => 'VOIDED']);
+            }
+
+            if ((string)$doc->status !== 'POSTED') {
+                return response()->json([
+                    'error' => ['code' => 'invalid_status', 'message' => 'Only POSTED documents can be voided']
+                ], 409);
+            }
+
+            // Find original movements posted by this SA.
+            // IMPORTANT: your posting service MUST stamp source_type/source_id consistently.
+            $origMoves = DB::table('inventory_movements')
+                ->where('source_type', 'STOCK_ADJUSTMENT')
+                ->where('source_id', (string)$id)
+                ->orderBy('created_at', 'asc')
+                ->lockForUpdate()
+                ->get();
+
+            if ($origMoves->isEmpty()) {
+                return response()->json([
+                    'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: no ledger movements found for this document']
+                ], 409);
+            }
+
+            foreach ($origMoves as $m) {
+                if (empty($m->inventory_lot_id)) {
+                    return response()->json([
+                        'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: movement missing inventory_lot_id (deterministic reversal required)']
+                    ], 409);
+                }
+
+                $qty = (float)$m->qty;
+                $reverseType = ((string)$m->type === 'IN') ? 'OUT' : 'IN';
+
+                $lot = DB::table('inventory_lots')
+                    ->where('id', (string)$m->inventory_lot_id)
+                    ->lockForUpdate()
+                    ->first(['id', 'remaining_qty', 'branch_id', 'inventory_item_id']);
+
+                if (!$lot) {
+                    return response()->json([
+                        'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: lot not found']
+                    ], 409);
+                }
+
+                if ($reverseType === 'IN') {
+                    // reverse OUT -> put back to the same lot
+                    DB::table('inventory_lots')
+                        ->where('id', (string)$m->inventory_lot_id)
+                        ->update([
+                            'remaining_qty' => DB::raw('remaining_qty + ' . $qty),
+                            'updated_at'    => now(),
+                        ]);
+                } else {
+                    // reverse IN -> take back from same lot (must have enough remaining)
+                    $remaining = (float)$lot->remaining_qty;
+                    if ($remaining < $qty) {
+                        return response()->json([
+                            'error' => ['code' => 'cannot_void', 'message' => 'Cannot void: insufficient remaining_qty to reverse an IN movement']
+                        ], 409);
+                    }
+
+                    DB::table('inventory_lots')
+                        ->where('id', (string)$m->inventory_lot_id)
+                        ->update([
+                            'remaining_qty' => DB::raw('remaining_qty - ' . $qty),
+                            'updated_at'    => now(),
+                        ]);
+                }
+
+                DB::table('inventory_movements')->insert([
+                    'id'               => (string)Str::uuid(),
+                    'branch_id'         => (string)$m->branch_id,
+                    'inventory_item_id' => (string)$m->inventory_item_id,
+                    'type'              => $reverseType,
+                    'qty'               => $m->qty,
+                    'inventory_lot_id'  => (string)$m->inventory_lot_id,
+                    'source_type'       => 'STOCK_ADJUSTMENT_VOID',
+                    'source_id'         => (string)$id,
+                    'ref_type'          => 'inventory_movements',
+                    'ref_id'            => (string)$m->id,
+                    'created_at'        => now(),
+                    'updated_at'        => now(),
+                ]);
+
+                // Recompute cached on_hand projection from lots (canonical)
+                $onHand = DB::table('inventory_lots')
+                    ->where('branch_id', (string)$m->branch_id)
+                    ->where('inventory_item_id', (string)$m->inventory_item_id)
+                    ->sum('remaining_qty');
+
+                DB::table('inventory_items')
+                    ->where('branch_id', (string)$m->branch_id)
+                    ->where('id', (string)$m->inventory_item_id)
+                    ->update([
+                        'on_hand'    => $onHand,
+                        'updated_at' => now(),
+                    ]);
+            }
+
+            DB::table('stock_adjustments')->where('id', (string)$id)->update([
+                'status'      => 'VOIDED',
+                'voided_at'   => now(),
+                'voided_by'   => (string)$u->id,
+                'void_reason' => (string)$data['reason'],
+                'updated_at'  => now(),
+            ]);
+
+            Audit::log($request, 'void', 'stock_adjustments', (string)$doc->id, [
+                'adjustment_no'   => (string)$doc->adjustment_no,
+                'reason'          => (string)$data['reason'],
+                'reversed_count'  => $origMoves->count(),
+                'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
+            ]);
+
+            return response()->json(['id' => (string)$doc->id, 'status' => 'VOIDED']);
+        });
     }
 }
