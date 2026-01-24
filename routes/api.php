@@ -122,7 +122,7 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
         // Inventory audit routes (if file exists)
         $auditRoutes = __DIR__ . '/api_inventory_audit.php';
         if (file_exists($auditRoutes)) {
-            require $auditRoutes;
+            require_once $auditRoutes;
         }
 
         Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->whereUuid('id');
