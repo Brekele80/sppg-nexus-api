@@ -51,9 +51,9 @@ Route::middleware(['supabase'])->group(function () {
 Route::middleware(['supabase', 'requireCompany'])->group(function () {
 
     /*
-    |----------------------------------------------------------------------
+    |--------------------------------------------------------------------------
     | READ (no idempotency required)
-    |----------------------------------------------------------------------
+    |--------------------------------------------------------------------------
     */
 
     // Suppliers / Notifications
@@ -113,11 +113,17 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     });
 
     /*
-    |----------------------------------------------------------------------
+    |--------------------------------------------------------------------------
     | IDEMPOTENT MUTATION ZONE
-    |----------------------------------------------------------------------
+    |--------------------------------------------------------------------------
     */
     Route::middleware(['idempotency'])->group(function () {
+
+        // Inventory audit routes (if file exists)
+        $auditRoutes = __DIR__ . '/api_inventory_audit.php';
+        if (file_exists($auditRoutes)) {
+            require $auditRoutes;
+        }
 
         Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->whereUuid('id');
         Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
@@ -131,7 +137,8 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
         });
 
         Route::middleware(['requireRole:CHEF,DC_ADMIN'])->group(function () {
-            Route::post('/kitchen/out', [KitchenOutController::class, 'store']);
+            // If your controller method is "create" not "store", align it here.
+            Route::post('/kitchen/out', [KitchenOutController::class, 'create']);
         });
 
         Route::middleware(['requireRole:PURCHASE_CABANG'])->group(function () {
