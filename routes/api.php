@@ -125,6 +125,11 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             require_once $auditRoutes;
         }
 
+        $integrityRoutes = __DIR__ . '/api_inventory_integrity_audit.php';
+        if (file_exists($integrityRoutes)) {
+            require_once $integrityRoutes;
+        }
+
         Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->whereUuid('id');
         Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
 
