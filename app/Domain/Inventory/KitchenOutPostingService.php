@@ -13,32 +13,35 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 class KitchenOutPostingService
 {
     /**
-     * Post a Kitchen OUT:
-     * - FIFO consume from inventory_lots.remaining_qty (truth)
-     * - Append-only inventory_movements rows (type=OUT, qty negative)
-     * - Recompute inventory_items.on_hand from lots inside same TX
-     * - Mark kitchen_outs status POSTED
+     * Posts a SUBMITTED kitchen_out into:
+     * - FIFO depletion of inventory_lots.remaining_qty (truth)
+     * - inventory_movements (canonical ledger: type IN|OUT, signed qty)
+     * - inventory_items.on_hand recomputed from lots INSIDE the same TX
      *
-     * Idempotency model:
-     * - Row lock kitchen_outs; if already POSTED => return deterministic replay.
+     * Canonical ledger invariant (enforced by DB constraints):
+     * - type: IN|OUT
+     * - qty:  IN => >= 0, OUT => <= 0
      *
-     * Hard invariants:
-     * - inventory_movements.type must be IN|OUT
-     * - inventory_movements.qty sign must match type (OUT => qty <= 0)
+     * Idempotency:
+     * - If already POSTED, returns deterministic response without re-posting.
+     *
+     * IMPORTANT:
+     * - Inside TX, never "return error"; always THROW to rollback.
      */
     public function post(string $kitchenOutId, Request $request): array
     {
         $u = AuthUser::get($request);
+        // Roles: CHEF (optionally allow DC_ADMIN)
         AuthUser::requireRole($u, ['CHEF', 'DC_ADMIN']);
 
         $companyId = AuthUser::requireCompanyContext($request);
-        $idempotencyKey = (string) $request->header('Idempotency-Key', '');
+        $idempotencyKey = (string)$request->header('Idempotency-Key', '');
 
         return DB::transaction(function () use ($kitchenOutId, $request, $u, $companyId, $idempotencyKey) {
 
-            // 1) Lock header
+            // 1) Lock kitchen_out header
             $ko = DB::table('kitchen_outs')
-                ->where('id', (string) $kitchenOutId)
+                ->where('id', (string)$kitchenOutId)
                 ->lockForUpdate()
                 ->first();
 
@@ -46,10 +49,10 @@ class KitchenOutPostingService
                 throw new HttpException(404, 'Kitchen out not found');
             }
 
-            // 2) Company boundary (defense-in-depth)
+            // 2) Company boundary (kitchen_outs has no company_id; enforce via branch)
             $branchOk = DB::table('branches')
-                ->where('id', (string) $ko->branch_id)
-                ->where('company_id', (string) $companyId)
+                ->where('id', (string)$ko->branch_id)
+                ->where('company_id', (string)$companyId)
                 ->exists();
 
             if (!$branchOk) {
@@ -58,25 +61,25 @@ class KitchenOutPostingService
 
             // 3) Branch access
             $allowed = AuthUser::allowedBranchIds($request);
-            if (!in_array((string) $ko->branch_id, $allowed, true)) {
+            if (!in_array((string)$ko->branch_id, $allowed, true)) {
                 throw new HttpException(403, 'Forbidden (no branch access)');
             }
 
-            $status = (string) ($ko->status ?? 'DRAFT');
+            $status = (string)($ko->status ?? 'DRAFT');
 
-            // 4) Idempotent replay if already POSTED
+            // Idempotent replay
             if ($status === 'POSTED') {
-                return $this->buildResponse((string) $ko->id);
+                return $this->buildResponse((string)$ko->id, (string)$companyId, $request);
             }
 
-            // 5) Gate: only SUBMITTED can be posted
+            // Gate: only SUBMITTED can be posted
             if ($status !== 'SUBMITTED') {
                 throw new HttpException(409, 'Only SUBMITTED kitchen outs can be posted');
             }
 
-            // 6) Load lines (lock rows to prevent edit while posting)
+            // 4) Load lines (stable) and lock them
             $lines = DB::table('kitchen_out_lines')
-                ->where('kitchen_out_id', (string) $ko->id)
+                ->where('kitchen_out_id', (string)$ko->id)
                 ->orderBy('created_at')
                 ->lockForUpdate()
                 ->get();
@@ -90,94 +93,119 @@ class KitchenOutPostingService
             $now = now();
 
             $movementIds = [];
-            $consumptions = []; // for audit: per line consumption across lots
-            $touchedInventoryItemIds = [];
+            $lotUpdates = [];
+            $consumption = [];
+            $touchedItemIds = [];
 
-            foreach ($lines as $line) {
-                $invItemId = (string) $line->inventory_item_id;
+            // 5) Post FIFO consumption per line
+            foreach ($lines as $idx => $ln) {
+                $lineIdx = (int)$idx;
 
-                $qtyRequested = $this->dec3((string) $line->qty);
-                if (bccomp($qtyRequested, '0.000', 3) <= 0) {
+                $inventoryItemId = (string)$ln->inventory_item_id;
+                $qtyNeed = $this->dec3((string)$ln->qty);
+
+                if (bccomp($qtyNeed, '0.000', 3) <= 0) {
                     throw ValidationException::withMessages([
-                        'qty' => ['qty must be > 0'],
+                        "lines.$lineIdx.qty" => ['qty must be > 0'],
                     ]);
                 }
 
-                // Lock inventory item row to serialize projection update
+                // Lock inventory item row (branch guard + stable read)
                 $invItem = DB::table('inventory_items')
-                    ->where('id', $invItemId)
-                    ->where('branch_id', (string) $ko->branch_id)
+                    ->where('id', $inventoryItemId)
+                    ->where('branch_id', (string)$ko->branch_id)
                     ->lockForUpdate()
                     ->first();
 
                 if (!$invItem) {
                     throw ValidationException::withMessages([
-                        'inventory_item_id' => ['inventory_item_id not found in this branch'],
+                        "lines.$lineIdx.inventory_item_id" => ['inventory_item_id not found in this branch'],
                     ]);
                 }
 
-                $onHandBefore = $this->sumLots((string) $ko->branch_id, $invItemId);
+                $touchedItemIds[] = $inventoryItemId;
 
-                // FIFO consume from lots with remaining_qty > 0
-                $remainingToConsume = $qtyRequested;
-                $lineConsumptions = [];
+                // FIFO lots: oldest first. Lock lots.
+                $lots = DB::table('inventory_lots')
+                    ->where('branch_id', (string)$ko->branch_id)
+                    ->where('inventory_item_id', $inventoryItemId)
+                    ->where('remaining_qty', '>', 0)
+                    ->orderBy('received_at')
+                    ->orderBy('created_at')
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
 
-                while (bccomp($remainingToConsume, '0.000', 3) > 0) {
+                $available = '0.000';
+                foreach ($lots as $lot) {
+                    $available = bcadd($available, $this->dec3((string)$lot->remaining_qty), 3);
+                }
 
-                    // Lock next FIFO lot
-                    $lot = DB::table('inventory_lots')
-                        ->where('branch_id', (string) $ko->branch_id)
-                        ->where('inventory_item_id', $invItemId)
-                        ->where('remaining_qty', '>', 0)
-                        ->orderBy('received_at', 'asc')
-                        ->orderBy('created_at', 'asc')
-                        ->orderBy('id', 'asc')
-                        ->lockForUpdate()
-                        ->first();
+                if (bccomp($available, $qtyNeed, 3) < 0) {
+                    $name = (string)($invItem->item_name ?? '');
+                    $unit = (string)($invItem->unit ?? '');
+                    throw ValidationException::withMessages([
+                        "lines.$lineIdx.qty" => [
+                            "Insufficient stock for {$name} {$unit}. Need {$qtyNeed}, available {$available}",
+                        ],
+                    ]);
+                }
 
-                    if (!$lot) {
-                        throw ValidationException::withMessages([
-                            'qty' => ["Insufficient stock for item {$invItem->item_name} (need {$remainingToConsume})"],
-                        ]);
+                $remainingNeed = $qtyNeed;
+
+                foreach ($lots as $lot) {
+                    if (bccomp($remainingNeed, '0.000', 3) <= 0) {
+                        break;
                     }
 
-                    $lotRemaining = $this->dec3((string) $lot->remaining_qty);
+                    $lotRemaining = $this->dec3((string)$lot->remaining_qty);
 
-                    $consume = $this->minDec3($remainingToConsume, $lotRemaining);
-                    if (bccomp($consume, '0.000', 3) <= 0) {
-                        // Defensive; should never happen given remaining_qty > 0
-                        throw new HttpException(500, 'Invalid FIFO lot state');
+                    if (bccomp($lotRemaining, '0.000', 3) <= 0) {
+                        continue;
                     }
 
-                    // Deplete lot
+                    // consume = min(remainingNeed, lotRemaining)
+                    $consume = (bccomp($remainingNeed, $lotRemaining, 3) <= 0) ? $remainingNeed : $lotRemaining;
+
+                    // Update lot remaining_qty
+                    $newRemaining = bcsub($lotRemaining, $consume, 3);
+
                     DB::table('inventory_lots')
-                        ->where('id', (string) $lot->id)
+                        ->where('id', (string)$lot->id)
                         ->update([
-                            'remaining_qty' => DB::raw('remaining_qty - ' . $consume),
+                            'remaining_qty' => $newRemaining,
                             'updated_at' => $now,
                         ]);
 
-                    // Movement OUT (signed negative) — satisfies constraints:
-                    // - type = OUT
-                    // - qty <= 0
-                    $moveId = (string) Str::uuid();
+                    $lotUpdates[] = [
+                        'inventory_lot_id' => (string)$lot->id,
+                        'lot_code' => (string)($lot->lot_code ?? ''),
+                        'before_remaining_qty' => $lotRemaining,
+                        'after_remaining_qty' => $newRemaining,
+                        'consumed_qty' => $consume,
+                    ];
+
+                    // Insert movement OUT with signed negative qty (DB sign constraint)
+                    $moveId = (string)Str::uuid();
+                    $signedOutQty = $this->neg3($consume);
 
                     DB::table('inventory_movements')->insert([
                         'id' => $moveId,
-                        'branch_id' => (string) $ko->branch_id,
-                        'inventory_item_id' => $invItemId,
+                        'branch_id' => (string)$ko->branch_id,
+                        'inventory_item_id' => $inventoryItemId,
                         'type' => 'OUT',
-                        'qty' => $this->negDec3($consume), // negative
+                        'qty' => $signedOutQty, // negative
 
-                        'inventory_lot_id' => (string) $lot->id,
+                        'inventory_lot_id' => (string)$lot->id,
 
                         'source_type' => 'KITCHEN_OUT',
-                        'source_id' => (string) $ko->id,
-                        'ref_type' => 'kitchen_outs',
-                        'ref_id' => (string) $ko->id,
+                        'source_id' => (string)$ko->id,
 
-                        'actor_id' => (string) $u->id,
-                        'note' => $this->buildMovementNote($ko, $line),
+                        'ref_type' => 'kitchen_outs',
+                        'ref_id' => (string)$ko->id,
+
+                        'actor_id' => (string)$u->id,
+                        'note' => $this->buildMovementNote($ko, $ln),
 
                         'created_at' => $now,
                         'updated_at' => $now,
@@ -185,87 +213,96 @@ class KitchenOutPostingService
 
                     $movementIds[] = $moveId;
 
-                    $lineConsumptions[] = [
-                        'inventory_lot_id' => (string) $lot->id,
-                        'lot_code' => (string) ($lot->lot_code ?? ''),
+                    $consumption[] = [
+                        'kitchen_out_line_id' => (string)$ln->id,
+                        'inventory_item_id' => $inventoryItemId,
+                        'item_name' => (string)($invItem->item_name ?? ''),
+                        'unit' => (string)($invItem->unit ?? ''),
+                        'inventory_lot_id' => (string)$lot->id,
+                        'lot_code' => (string)($lot->lot_code ?? ''),
                         'consumed_qty' => $consume,
                         'movement_id' => $moveId,
-                        'lot_remaining_after' => $this->dec3((string) ((float) $lotRemaining - (float) $consume)), // for display only
                     ];
 
-                    $remainingToConsume = bcsub($remainingToConsume, $consume, 3);
+                    $remainingNeed = bcsub($remainingNeed, $consume, 3);
                 }
 
-                // Recompute cached on_hand from lots (truth) inside same TX
-                $onHandAfter = $this->recomputeOnHandFromLots((string) $ko->branch_id, $invItemId);
+                // Safety: should be fully consumed due to availability check
+                if (bccomp($remainingNeed, '0.000', 3) > 0) {
+                    throw new HttpException(500, 'FIFO consumption incomplete (unexpected)');
+                }
+            }
 
-                $touchedInventoryItemIds[] = $invItemId;
+            // 6) Recompute on_hand from lots INSIDE the same TX (truth = lots)
+            $touchedItemIds = array_values(array_unique($touchedItemIds));
+            $onHandRecomputed = [];
 
-                $consumptions[] = [
-                    'kitchen_out_line_id' => (string) $line->id,
-                    'inventory_item_id' => $invItemId,
-                    'item_name' => (string) ($invItem->item_name ?? ($line->item_name ?? '')),
-                    'unit' => (string) ($invItem->unit ?? ($line->unit ?? '')),
-                    'qty_requested' => $qtyRequested,
-                    'on_hand_before' => $onHandBefore,
-                    'on_hand_after' => $onHandAfter,
-                    'fifo' => $lineConsumptions,
+            foreach ($touchedItemIds as $inventoryItemId) {
+                $sum = $this->sumLots((string)$ko->branch_id, (string)$inventoryItemId);
+
+                DB::table('inventory_items')
+                    ->where('id', (string)$inventoryItemId)
+                    ->where('branch_id', (string)$ko->branch_id)
+                    ->update([
+                        'on_hand' => $sum,
+                        'updated_at' => $now,
+                    ]);
+
+                $onHandRecomputed[] = [
+                    'inventory_item_id' => (string)$inventoryItemId,
+                    'on_hand' => $sum,
                 ];
             }
 
-            // Mark POSTED
+            // 7) Mark POSTED (terminal)
             DB::table('kitchen_outs')
-                ->where('id', (string) $ko->id)
+                ->where('id', (string)$ko->id)
                 ->update([
                     'status' => 'POSTED',
                     'posted_at' => $now,
-                    'posted_by' => (string) $u->id,
+                    'posted_by' => (string)$u->id,
                     'updated_at' => $now,
                 ]);
 
-            Audit::log($request, 'post', 'kitchen_outs', (string) $ko->id, [
-                'branch_id' => (string) $ko->branch_id,
-                'out_number' => (string) ($ko->out_number ?? ''),
-                'posted_at' => (string) $now,
+            // 8) Audit
+            Audit::log($request, 'post', 'kitchen_outs', (string)$ko->id, [
+                'from' => 'SUBMITTED',
+                'to' => 'POSTED',
+                'branch_id' => (string)$ko->branch_id,
+                'out_number' => (string)($ko->out_number ?? ''),
+                'out_at' => (string)($ko->out_at ?? ''),
                 'movement_ids' => $movementIds,
-                'touched_inventory_item_ids' => array_values(array_unique($touchedInventoryItemIds)),
-                'consumptions' => $consumptions,
+                'fifo_lot_updates' => $lotUpdates,
+                'consumption' => $consumption,
+                'on_hand_recomputed' => $onHandRecomputed,
                 'idempotency_key' => $idempotencyKey,
             ]);
 
-            return $this->buildResponse((string) $ko->id);
+            return $this->buildResponse((string)$ko->id, (string)$companyId, $request);
         });
     }
 
-    private function buildMovementNote(object $ko, object $line): ?string
-    {
-        $outNo = (string) ($ko->out_number ?? '');
-
-        $lineRemarks = null;
-        if (property_exists($line, 'remarks') && $line->remarks !== null && trim((string) $line->remarks) !== '') {
-            $lineRemarks = trim((string) $line->remarks);
-        } elseif (property_exists($line, 'notes') && $line->notes !== null && trim((string) $line->notes) !== '') {
-            $lineRemarks = trim((string) $line->notes);
-        }
-
-        $headerNotes = null;
-        if (property_exists($ko, 'notes') && $ko->notes !== null && trim((string) $ko->notes) !== '') {
-            $headerNotes = trim((string) $ko->notes);
-        }
-
-        $base = $outNo !== '' ? "Kitchen OUT {$outNo}" : "Kitchen OUT";
-
-        // Prefer line remarks; fallback to header notes; else base only
-        if ($lineRemarks) return $base . ' — ' . $lineRemarks;
-        if ($headerNotes) return $base . ' — ' . $headerNotes;
-        return $base;
-    }
-
-    private function buildResponse(string $kitchenOutId): array
+    private function buildResponse(string $kitchenOutId, string $companyId, Request $request): array
     {
         $ko = DB::table('kitchen_outs')->where('id', $kitchenOutId)->first();
         if (!$ko) {
             throw new HttpException(404, 'Kitchen out not found');
+        }
+
+        // company boundary via branch
+        $branchOk = DB::table('branches')
+            ->where('id', (string)$ko->branch_id)
+            ->where('company_id', (string)$companyId)
+            ->exists();
+
+        if (!$branchOk) {
+            throw new HttpException(404, 'Not found');
+        }
+
+        // branch access
+        $allowed = AuthUser::allowedBranchIds($request);
+        if (!in_array((string)$ko->branch_id, $allowed, true)) {
+            throw new HttpException(403, 'Forbidden (no branch access)');
         }
 
         $lines = DB::table('kitchen_out_lines')
@@ -273,7 +310,6 @@ class KitchenOutPostingService
             ->orderBy('created_at')
             ->get();
 
-        // movements created by this kitchen out (ledger view)
         $moves = DB::table('inventory_movements')
             ->where('source_type', 'KITCHEN_OUT')
             ->where('source_id', $kitchenOutId)
@@ -281,18 +317,37 @@ class KitchenOutPostingService
             ->get();
 
         return [
-            'id' => (string) $ko->id,
-            'branch_id' => (string) $ko->branch_id,
-            'out_number' => (string) ($ko->out_number ?? ''),
-            'status' => (string) ($ko->status ?? ''),
+            'id' => (string)$ko->id,
+            'branch_id' => (string)$ko->branch_id,
+            'out_number' => (string)($ko->out_number ?? ''),
+            'status' => (string)($ko->status ?? ''),
             'out_at' => $ko->out_at ?? null,
+
+            'created_by' => $ko->created_by ?? null,
             'submitted_at' => $ko->submitted_at ?? null,
             'submitted_by' => $ko->submitted_by ?? null,
             'posted_at' => $ko->posted_at ?? null,
             'posted_by' => $ko->posted_by ?? null,
+
+            'notes' => $ko->notes ?? null,
+            'meta' => $ko->meta ?? null,
+
+            'created_at' => $ko->created_at ?? null,
+            'updated_at' => $ko->updated_at ?? null,
+
             'lines' => $lines,
             'movements' => $moves,
         ];
+    }
+
+    private function buildMovementNote(object $ko, object $line): ?string
+    {
+        $base = 'Kitchen OUT: ' . (string)($ko->out_number ?? '');
+        $remarks = $line->remarks ?? null;
+        if ($remarks === null || trim((string)$remarks) === '') {
+            return $base;
+        }
+        return $base . ' | ' . trim((string)$remarks);
     }
 
     private function sumLots(string $branchId, string $inventoryItemId): string
@@ -304,21 +359,7 @@ class KitchenOutPostingService
             [$branchId, $inventoryItemId]
         );
 
-        return $this->dec3((string) ($row->lots_sum ?? '0'));
-    }
-
-    private function recomputeOnHandFromLots(string $branchId, string $inventoryItemId): string
-    {
-        $sum = $this->sumLots($branchId, $inventoryItemId);
-
-        DB::update(
-            "update inventory_items
-             set on_hand = ?, updated_at = ?
-             where id = ? and branch_id = ?",
-            [$sum, now(), $inventoryItemId, $branchId]
-        );
-
-        return $sum;
+        return $this->dec3((string)($row->lots_sum ?? '0'));
     }
 
     /**
@@ -346,17 +387,13 @@ class KitchenOutPostingService
         return $neg && $out !== '0.000' ? '-' . $out : $out;
     }
 
-    private function negDec3(string $n): string
+    /**
+     * Force a scale(3) string to negative (unless already -0.000).
+     */
+    private function neg3(string $n): string
     {
         $n = $this->dec3($n);
-        if ($n === '0.000') return $n;
+        if ($n === '0.000') return '0.000';
         return str_starts_with($n, '-') ? $n : ('-' . $n);
-    }
-
-    private function minDec3(string $a, string $b): string
-    {
-        $a = $this->dec3($a);
-        $b = $this->dec3($b);
-        return bccomp($a, $b, 3) <= 0 ? $a : $b;
     }
 }
