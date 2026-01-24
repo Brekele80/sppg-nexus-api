@@ -12,154 +12,145 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 class InventoryAuditorService
 {
     /**
-     * Audit (and optionally fix) inventory_items.on_hand by recomputing from inventory_lots.remaining_qty.
+     * Audit inventory_items.on_hand (cached) vs sum(inventory_lots.remaining_qty) (truth).
      *
-     * Rules:
-     * - Tenant boundary: branch must belong to company_id
-     * - Access boundary: user must have branch access
-     * - Truth: on_hand = SUM(inventory_lots.remaining_qty) per (branch_id, inventory_item_id)
-     * - If $fix=true, update on_hand inside the same transaction and lock rows for update.
+     * Params:
+     * - $branchId required (scope)
+     * - $inventoryItemId optional (single item)
+     * - $fix: if true => recompute+update inventory_items.on_hand from lots INSIDE same TX
      *
-     * Input:
-     * - $branchId (required)
-     * - $inventoryItemId (optional) audits one item
-     * - $fix (bool) whether to persist correction
+     * Invariants:
+     * - company boundary enforced via branches.company_id
+     * - branch access enforced via AuthUser::allowedBranchIds
+     * - mutations must THROW to rollback (idempotency zone)
+     * - audit logging uses Audit::log($request, $action, $entity, $entity_id, $payload)
      */
     public function auditOnHand(Request $request, string $branchId, ?string $inventoryItemId, bool $fix): array
     {
         $u = AuthUser::get($request);
-        // Auditor is an operational control. Keep tight.
-        AuthUser::requireRole($u, ['DC_ADMIN']);
-
+        AuthUser::requireRole($u, ['DC_ADMIN']); // keep strict for now
         $companyId = AuthUser::requireCompanyContext($request);
-        $allowedBranches = AuthUser::allowedBranchIds($request);
+        $idempotencyKey = (string) $request->header('Idempotency-Key', '');
 
-        if (empty($allowedBranches) || !in_array($branchId, $allowedBranches, true)) {
-            throw new HttpException(403, 'Forbidden (no branch access)');
-        }
+        return DB::transaction(function () use ($request, $u, $companyId, $branchId, $inventoryItemId, $fix, $idempotencyKey) {
 
-        return DB::transaction(function () use ($request, $u, $companyId, $branchId, $inventoryItemId, $fix) {
-
-            // Defense-in-depth: branch belongs to company.
+            // 1) Company boundary: branch must belong to company
             $branchOk = DB::table('branches')
                 ->where('id', $branchId)
-                ->where('company_id', (string)$companyId)
+                ->where('company_id', (string) $companyId)
                 ->exists();
 
             if (!$branchOk) {
-                throw new HttpException(404, 'Branch not found');
+                throw new HttpException(404, 'Not found');
             }
 
-            // Choose lock strategy:
-            // - fix=false: no lockForUpdate needed (read-only)
-            // - fix=true : lock inventory_items rows to prevent concurrent posts drifting results mid-fix
+            // 2) Branch access
+            $allowed = AuthUser::allowedBranchIds($request);
+            if (empty($allowed) || !in_array($branchId, $allowed, true)) {
+                throw new HttpException(403, 'Forbidden (no branch access)');
+            }
+
+            // 3) Load inventory items in scope (lock if fix=true to serialize updates)
             $itemsQ = DB::table('inventory_items')
-                ->where('branch_id', $branchId)
-                ->select(['id', 'item_name', 'unit', 'on_hand']);
+                ->where('branch_id', $branchId);
 
             if ($inventoryItemId) {
                 $itemsQ->where('id', $inventoryItemId);
             }
 
+            // Deterministic order
+            $itemsQ->orderBy('item_name')->orderBy('id');
+
             if ($fix) {
                 $itemsQ->lockForUpdate();
             }
 
-            $items = $itemsQ->orderBy('id')->get();
-            if ($items->isEmpty()) {
+            $items = $itemsQ->get();
+
+            if ($inventoryItemId && $items->isEmpty()) {
                 throw ValidationException::withMessages([
-                    'inventory_item_id' => [$inventoryItemId ? 'Inventory item not found in branch' : 'No inventory items found in branch'],
+                    'inventory_item_id' => ['inventory item not found in this branch'],
                 ]);
             }
 
-            $now = now();
-
-            $checked = 0;
-            $mismatched = 0;
-            $fixed = 0;
-
-            $rows = [];
+            $results = [];
+            $mismatchCount = 0;
+            $fixedCount = 0;
 
             foreach ($items as $it) {
-                $checked++;
+                $itemId = (string) $it->id;
 
-                $truth = $this->sumLotsDec3($branchId, (string)$it->id);
-                $cached = $this->dec3((string)($it->on_hand ?? '0'));
+                $lotsSum = $this->sumLots($branchId, $itemId); // truth
+                $cached = $this->dec3((string) ($it->on_hand ?? '0'));
 
-                $isMismatch = (bccomp($truth, $cached, 3) !== 0);
-                if ($isMismatch) $mismatched++;
+                $delta = $this->dec3(bcsub($cached, $lotsSum, 3)); // cached - truth
 
-                $didFix = false;
+                $isMatch = (bccomp($cached, $lotsSum, 3) === 0);
 
-                if ($fix && $isMismatch) {
-                    // Persist correction (still inside TX)
-                    DB::table('inventory_items')
-                        ->where('id', (string)$it->id)
-                        ->where('branch_id', $branchId)
-                        ->update([
-                            'on_hand' => $truth,
-                            'updated_at' => $now,
-                        ]);
-
-                    $didFix = true;
-                    $fixed++;
-
-                    // Per-item audit (optional but very useful when investigating drift)
-                    Audit::log($request, 'fix', 'inventory_items', (string)$it->id, [
-                        'branch_id' => $branchId,
-                        'item_name' => (string)($it->item_name ?? ''),
-                        'unit' => $it->unit !== null ? (string)$it->unit : null,
-                        'on_hand_before' => $cached,
-                        'on_hand_after' => $truth,
-                        'source' => 'InventoryAuditorService.auditOnHand',
-                        'fixed_at' => (string)$now,
-                        'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
-                    ]);
+                if (!$isMatch) {
+                    $mismatchCount++;
                 }
 
-                $rows[] = [
-                    'inventory_item_id' => (string)$it->id,
-                    'item_name' => (string)($it->item_name ?? ''),
-                    'unit' => $it->unit !== null ? (string)$it->unit : null,
-                    'on_hand_cached' => $cached,
-                    'on_hand_truth' => $truth,
-                    'mismatch' => $isMismatch,
-                    'fixed' => $didFix,
+                $before = $cached;
+                $after = $cached;
+
+                if ($fix && !$isMatch) {
+                    DB::table('inventory_items')
+                        ->where('id', $itemId)
+                        ->where('branch_id', $branchId)
+                        ->update([
+                            'on_hand' => $lotsSum,
+                            'updated_at' => now(),
+                        ]);
+
+                    $after = $lotsSum;
+                    $fixedCount++;
+                }
+
+                $results[] = [
+                    'inventory_item_id' => $itemId,
+                    'item_name' => (string) ($it->item_name ?? ''),
+                    'unit' => $it->unit !== null ? (string) $it->unit : null,
+
+                    'cached_on_hand' => $before,
+                    'lots_remaining_sum' => $lotsSum,
+                    'delta_cached_minus_truth' => $delta,
+
+                    'match' => $isMatch,
+                    'fixed' => ($fix && !$isMatch),
+                    'new_cached_on_hand' => $after,
                 ];
             }
 
-            // Summary audit at branch scope (always log if fix=true; else log only if mismatches exist)
-            if ($fix || $mismatched > 0) {
-                Audit::log($request, $fix ? 'fix' : 'audit', 'branches', $branchId, [
-                    'branch_id' => $branchId,
-                    'company_id' => (string)$companyId,
-                    'inventory_item_id' => $inventoryItemId,
-                    'checked' => $checked,
-                    'mismatched' => $mismatched,
-                    'fixed' => $fixed,
-                    'source' => 'InventoryAuditorService.auditOnHand',
-                    'ran_at' => (string)$now,
-                    'idempotency_key' => (string)$request->header('Idempotency-Key', ''),
-                ]);
-            }
+            $payload = [
+                'branch_id' => $branchId,
+                'inventory_item_id' => $inventoryItemId,
+                'fix' => $fix,
+                'mismatch_count' => $mismatchCount,
+                'fixed_count' => $fixedCount,
+                'idempotency_key' => $idempotencyKey,
+            ];
+
+            Audit::log(
+                $request,
+                $fix ? 'audit_on_hand_fix' : 'audit_on_hand',
+                'inventory_items',
+                $inventoryItemId ?: $branchId,
+                $payload
+            );
 
             return [
                 'branch_id' => $branchId,
                 'inventory_item_id' => $inventoryItemId,
                 'fix' => $fix,
-                'checked' => $checked,
-                'mismatched' => $mismatched,
-                'fixed' => $fixed,
-                'rows' => $rows,
-                'ran_at' => (string)$now,
+                'mismatch_count' => $mismatchCount,
+                'fixed_count' => $fixedCount,
+                'items' => $results,
             ];
         });
     }
 
-    /**
-     * Truth: SUM(remaining_qty) from lots, normalized to scale(3) decimal string.
-     */
-    private function sumLotsDec3(string $branchId, string $inventoryItemId): string
+    private function sumLots(string $branchId, string $inventoryItemId): string
     {
         $row = DB::selectOne(
             "select coalesce(sum(remaining_qty), 0) as lots_sum
@@ -168,11 +159,11 @@ class InventoryAuditorService
             [$branchId, $inventoryItemId]
         );
 
-        return $this->dec3((string)($row->lots_sum ?? '0'));
+        return $this->dec3((string) ($row->lots_sum ?? '0'));
     }
 
     /**
-     * Normalize numeric to a scale(3) decimal string.
+     * Normalize decimal to scale(3) string.
      */
     private function dec3(string $n): string
     {
