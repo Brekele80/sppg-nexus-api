@@ -327,6 +327,12 @@ class StockAdjustmentPostingService
                     if (bccomp($avail, '0.000', 3) <= 0) continue;
 
                     $take = (bccomp($avail, $need, 3) <= 0) ? $avail : $need;
+                    if (bccomp($avail, $take, 3) < 0) {
+                        throw new HttpException(
+                            409,
+                            "Adjustment would make lot {$lot->id} negative"
+                        );
+                    }
 
                     // Update FIFO truth
                     DB::update(

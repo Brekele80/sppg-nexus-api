@@ -141,8 +141,9 @@ class GoodsReceiptPostingService
                 // Received qty must be > 0 to create lot/move; allow zeros (skip) to support partial receipts
                 $qty = $this->dec3((string) $it->received_qty);
                 if (bccomp($qty, '0.000', 3) <= 0) {
-                    $seq++;
-                    continue;
+                    throw ValidationException::withMessages([
+                        "items.received_qty" => ['received_qty must be > 0'],
+                    ]);
                 }
 
                 // Resolve inventory item (prefer inventory_item_id; else by (branch, name, unit))

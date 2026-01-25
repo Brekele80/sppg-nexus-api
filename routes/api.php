@@ -26,6 +26,7 @@ use App\Http\Controllers\KitchenOutController;
 use App\Http\Controllers\BranchController;
 use App\Http\Controllers\InventoryItemController;
 use App\Http\Controllers\InventoryLotController;
+use App\Http\Controllers\InventoryMovementVoidController;
 
 /*
 |--------------------------------------------------------------------------
@@ -193,6 +194,11 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
 
             Route::post('/stock-adjustments/{id}/attachments', [StockAdjustmentAttachmentController::class, 'store'])
                 ->whereUuid('id');
+
+            Route::post(
+                '/inventory/movements/{id}/void',
+                [InventoryMovementVoidController::class, 'void']
+            )->whereUuid('id');
 
             Route::delete('/stock-adjustments/{id}/attachments/{attId}', [StockAdjustmentAttachmentController::class, 'destroy'])
                 ->whereUuid('id')
