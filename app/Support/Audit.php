@@ -4,6 +4,8 @@ namespace App\Support;
 
 use App\Services\Audit\AuditLogger;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class Audit
 {
@@ -39,31 +41,46 @@ class Audit
         return $value;
     }
 
-    public static function log(Request $request, string $action, string $entity, string $entityId, array $payload): void
+    public static function log(Request $request, string $action, string $entity, string $entityId, $payload): void
     {
-        $companyId = self::companyId($request);
-        $actorId   = self::actorId($request);
+        // Company context is injected by RequireCompanyContext middleware
+        $companyId = (string) ($request->attributes->get('company_id') ?? '');
 
-        // If missing context, do not hard-crash controllers by default.
-        if (!$companyId || !$actorId) {
-            return;
+        // Actor comes from auth middleware
+        $actor = $request->attributes->get('auth_user');
+        $actorId = $actor ? (string) $actor->id : null;
+
+        // Hard guardrails: audit should never write cross-tenant or anonymously
+        if ($companyId === '') {
+            abort(401, 'Missing company context');
+        }
+        if (!$actorId) {
+            abort(401, 'Unauthenticated');
         }
 
-        $safe = self::redact($payload);
-
-        // Simple size guard (avoid multi-MB jsonb rows)
-        $json = json_encode($safe, JSON_UNESCAPED_UNICODE);
-        if ($json !== false && strlen($json) > 200_000) { // 200KB
-            $safe = ['truncated' => true, 'note' => 'payload exceeded 200KB'];
+        // Ensure payload is valid JSON for jsonb column
+        if (is_string($payload)) {
+            json_decode($payload, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                abort(500, 'Audit payload is not valid JSON: ' . json_last_error_msg());
+            }
+            $payloadJson = $payload;
+        } else {
+            $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($payloadJson === false) {
+                abort(500, 'Failed to json_encode audit payload: ' . json_last_error_msg());
+            }
         }
 
-        AuditLogger::log([
+        DB::table('audit_ledger')->insert([
+            'id'         => (string) Str::uuid(),
             'company_id' => $companyId,
             'actor_id'   => $actorId,
-            'action'     => $action,
-            'entity'     => $entity,
-            'entity_id'  => $entityId,
-            'payload'    => $safe,
+            'action'     => (string) $action,
+            'entity'     => (string) $entity,
+            'entity_id'  => (string) $entityId,
+            'payload'    => $payloadJson, // bind JSON text; column is jsonb
+            'created_at' => now(),
         ]);
     }
 }

@@ -4,11 +4,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\PurchaseRequest;
 use App\Models\PurchaseRequestItem;
-use Illuminate\Http\Request;
-use Illuminate\Support\Str;
-use Illuminate\Support\Facades\DB;
-use App\Support\AuthUser;
 use App\Support\Audit;
+use App\Support\AuthUser;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class PurchaseRequestController extends BaseApiController
 {
@@ -17,7 +19,12 @@ class PurchaseRequestController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['CHEF']);
 
+        // Strong tenant boundary
         $companyId = AuthUser::requireCompanyContext($request);
+
+        // Mutation endpoints must have branch scope (header or profile.branch_id)
+        // Even though we accept branch_id in payload, this ensures consistent request context.
+        AuthUser::requireBranchAccess($request);
 
         $data = $request->validate([
             'branch_id' => 'required|uuid',
@@ -29,22 +36,22 @@ class PurchaseRequestController extends BaseApiController
             'items.*.remarks' => 'nullable|string',
         ]);
 
+        // Defense-in-depth: branch belongs to company
         $branchOk = DB::table('branches')
-            ->where('id', $data['branch_id'])
-            ->where('company_id', $companyId)
+            ->where('id', (string) $data['branch_id'])
+            ->where('company_id', (string) $companyId)
             ->exists();
 
         if (!$branchOk) {
-            return response()->json([
-                'error' => ['code' => 'branch_invalid', 'message' => 'Branch not found in company']
-            ], 422);
+            throw ValidationException::withMessages([
+                'branch_id' => ['Branch not found in company'],
+            ]);
         }
 
+        // Entitlement: user must have access to branch
         $allowed = AuthUser::allowedBranchIds($request);
-        if (!in_array($data['branch_id'], $allowed, true)) {
-            return response()->json([
-                'error' => ['code' => 'branch_forbidden', 'message' => 'No access to this branch']
-            ], 403);
+        if (!in_array((string) $data['branch_id'], $allowed, true)) {
+            throw new HttpException(403, 'No access to this branch');
         }
 
         return DB::transaction(function () use ($request, $u, $data, $companyId) {
@@ -52,8 +59,8 @@ class PurchaseRequestController extends BaseApiController
 
             PurchaseRequest::create([
                 'id' => $prId,
-                'branch_id' => $data['branch_id'],
-                'requested_by' => $u->id,
+                'branch_id' => (string) $data['branch_id'],
+                'requested_by' => (string) $u->id,
                 'status' => 'DRAFT',
                 'notes' => $data['notes'] ?? null,
             ]);
@@ -70,9 +77,9 @@ class PurchaseRequestController extends BaseApiController
             }
 
             Audit::log($request, 'create', 'purchase_requests', $prId, [
-                'branch_id' => $data['branch_id'],
+                'branch_id' => (string) $data['branch_id'],
                 'notes' => $data['notes'] ?? null,
-                'items' => array_map(fn($it) => [
+                'items' => array_map(fn ($it) => [
                     'item_name' => $it['item_name'],
                     'unit' => $it['unit'],
                     'qty' => (float) $it['qty'],
@@ -88,13 +95,11 @@ class PurchaseRequestController extends BaseApiController
     public function index(Request $request)
     {
         $this->authUser($request);
-        $companyId = AuthUser::requireCompanyContext($request);
+        AuthUser::requireCompanyContext($request);
 
         $allowedBranchIds = AuthUser::allowedBranchIds($request);
         if (empty($allowedBranchIds)) {
-            return response()->json([
-                'error' => ['code' => 'no_branch_access', 'message' => 'No branch access for this company']
-            ], 403);
+            throw new HttpException(403, 'No branch access for this company');
         }
 
         $q = PurchaseRequest::query()->whereIn('branch_id', $allowedBranchIds);
@@ -121,25 +126,72 @@ class PurchaseRequestController extends BaseApiController
 
         $companyId = AuthUser::requireCompanyContext($request);
 
-        $pr = $this->loadPrGuarded($request, $companyId, $id);
+        // Mutation endpoints must have branch scope
+        AuthUser::requireBranchAccess($request);
 
-        if ($pr->status !== 'DRAFT') {
-            return response()->json(['message' => 'Only DRAFT PR can be submitted'], 422);
-        }
+        $idempotencyKey = (string) $request->header('Idempotency-Key', '');
 
-        $pr->status = 'SUBMITTED';
-        $pr->submitted_at = now();
-        $pr->save();
+        return DB::transaction(function () use ($request, $id, $u, $companyId, $idempotencyKey) {
 
-        Audit::log($request, 'submit', 'purchase_requests', $pr->id, [
-            'from' => 'DRAFT',
-            'to' => 'SUBMITTED',
-            'branch_id' => $pr->branch_id,
-            'submitted_at' => (string) $pr->submitted_at,
-            'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
-        ]);
+            $prRow = DB::table('purchase_requests')
+                ->where('id', (string) $id)
+                ->lockForUpdate()
+                ->first();
 
-        return response()->json($this->loadPrGuarded($request, $companyId, $id), 200);
+            if (!$prRow) {
+                throw new HttpException(404, 'Purchase request not found');
+            }
+
+            // Tenant boundary via branches.company_id
+            $branchOk = DB::table('branches')
+                ->where('id', (string) $prRow->branch_id)
+                ->where('company_id', (string) $companyId)
+                ->exists();
+
+            if (!$branchOk) {
+                throw new HttpException(404, 'Not found');
+            }
+
+            // Branch access entitlement
+            $allowed = AuthUser::allowedBranchIds($request);
+            if (!in_array((string) $prRow->branch_id, $allowed, true)) {
+                throw new HttpException(403, 'Forbidden (no branch access)');
+            }
+
+            $status = (string) ($prRow->status ?? 'DRAFT');
+
+            if ($status === 'SUBMITTED') {
+                return response()->json($this->loadPrGuarded($request, $companyId, (string) $id), 200);
+            }
+
+            if ($status !== 'DRAFT') {
+                throw new HttpException(409, "Only DRAFT PR can be submitted (current: {$status})");
+            }
+
+            $now = now();
+
+            $update = [
+                'status' => 'SUBMITTED',
+                'submitted_at' => $now,
+                'updated_at' => $now,
+                'submitted_by' => (string) $u->id, // assumes column exists
+            ];
+
+            DB::table('purchase_requests')
+                ->where('id', (string) $id)
+                ->update($update);
+
+            Audit::log($request, 'submit', 'purchase_requests', (string) $id, [
+                'from' => 'DRAFT',
+                'to' => 'SUBMITTED',
+                'branch_id' => (string) $prRow->branch_id,
+                'submitted_by' => (string) $u->id,
+                'submitted_at' => (string) $now,
+                'idempotency_key' => $idempotencyKey,
+            ]);
+
+            return response()->json($this->loadPrGuarded($request, $companyId, (string) $id), 200);
+        });
     }
 
     private function loadPrGuarded(Request $request, string $companyId, string $id): PurchaseRequest
@@ -147,15 +199,17 @@ class PurchaseRequestController extends BaseApiController
         $pr = PurchaseRequest::with(['items'])->findOrFail($id);
 
         $branchOk = DB::table('branches')
-            ->where('id', $pr->branch_id)
-            ->where('company_id', $companyId)
+            ->where('id', (string) $pr->branch_id)
+            ->where('company_id', (string) $companyId)
             ->exists();
 
-        if (!$branchOk) abort(404, 'Not found');
+        if (!$branchOk) {
+            throw new HttpException(404, 'Not found');
+        }
 
         $allowed = AuthUser::allowedBranchIds($request);
-        if (!in_array($pr->branch_id, $allowed, true)) {
-            abort(403, 'Forbidden (no branch access)');
+        if (!in_array((string) $pr->branch_id, $allowed, true)) {
+            throw new HttpException(403, 'Forbidden (no branch access)');
         }
 
         return $pr;

@@ -10,12 +10,13 @@ class AuditLogger
     /**
      * Append-only audit event.
      *
-     * IMPORTANT:
-     * - Always include company_id
-     * - actor_id should be the supabase profile/user UUID (auth.uid()) you already use in API
-     * - entity is a stable string: 'purchase_orders', 'goods_receipts', etc.
-     * - action is a stable verb: 'create', 'submit', 'receive', 'confirm', 'reject', 'update', etc.
-     * - payload should contain inputs + computed diffs (but no secrets)
+     * Required keys:
+     * - company_id (uuid)
+     * - actor_id (uuid)
+     * - action (text)
+     * - entity (text)
+     * - entity_id (uuid)
+     * - payload (array|object|string(JSON))
      */
     public static function log(array $event): void
     {
@@ -26,14 +27,15 @@ class AuditLogger
             }
         }
 
-        // Ensure payload is valid JSON for jsonb
         $payload = $event['payload'];
 
         if (is_string($payload)) {
-            // If caller already passed JSON, keep it but validate it is JSON
+            // Validate JSON string
             json_decode($payload, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new \InvalidArgumentException("Audit payload string is not valid JSON: " . json_last_error_msg());
+                throw new \InvalidArgumentException(
+                    "Audit payload string is not valid JSON: " . json_last_error_msg()
+                );
             }
             $payloadJson = $payload;
         } else {
@@ -44,6 +46,8 @@ class AuditLogger
             }
         }
 
+        // IMPORTANT:
+        // For a jsonb column, sending a JSON text parameter is fine; Postgres stores it as jsonb.
         DB::table('audit_ledger')->insert([
             'id'         => (string) Str::uuid(),
             'company_id' => (string) $event['company_id'],
@@ -51,10 +55,7 @@ class AuditLogger
             'action'     => (string) $event['action'],
             'entity'     => (string) $event['entity'],
             'entity_id'  => (string) $event['entity_id'],
-
-            // IMPORTANT: bind as JSON text, Postgres will store it as jsonb
-            'payload'    => DB::raw("'" . str_replace("'", "''", $payloadJson) . "'::jsonb"),
-
+            'payload'    => $payloadJson, // bind as string; column is jsonb
             'created_at' => now(),
         ]);
     }

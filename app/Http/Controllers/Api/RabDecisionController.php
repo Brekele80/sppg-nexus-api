@@ -14,9 +14,15 @@ class RabDecisionController extends BaseApiController
     public function store(Request $request, string $id, RabApprovalService $service)
     {
         $u = $this->authUser($request);
+
+        // ANY OF: KA_SPPG or ACCOUNTING (parallel approval; min=1)
         $this->requireRole($u, ['KA_SPPG', 'ACCOUNTING']);
 
-        $companyId = AuthUser::companyId($request);
+        // Strong tenant boundary
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        // Mutation endpoints must have branch scope
+        AuthUser::requireBranchAccess($request);
 
         $data = $request->validate([
             'decision' => 'required|string|in:APPROVE,REJECT,approve,reject',
@@ -28,7 +34,7 @@ class RabDecisionController extends BaseApiController
         $ok = DB::table('purchase_requests as pr')
             ->join('branches as b', 'b.id', '=', 'pr.branch_id')
             ->where('pr.id', $rab->purchase_request_id)
-            ->where('b.company_id', $companyId)
+            ->where('b.company_id', (string) $companyId)
             ->exists();
 
         if (!$ok) abort(404, 'Not found');
@@ -43,7 +49,7 @@ class RabDecisionController extends BaseApiController
                 Audit::log($request, 'decision', 'rab_versions', $updated->id, [
                     'from' => $before,
                     'to' => (string) $updated->status,
-                    'decision' => strtoupper((string)$data['decision']),
+                    'decision' => strtoupper((string) $data['decision']),
                     'reason' => $data['reason'] ?? null,
                     'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
                 ]);
@@ -61,14 +67,16 @@ class RabDecisionController extends BaseApiController
     public function index(Request $request, string $id)
     {
         $this->authUser($request);
-        $companyId = AuthUser::companyId($request);
+
+        // Strong tenant boundary
+        $companyId = AuthUser::requireCompanyContext($request);
 
         $rab = RabVersion::findOrFail($id);
 
         $ok = DB::table('purchase_requests as pr')
             ->join('branches as b', 'b.id', '=', 'pr.branch_id')
             ->where('pr.id', $rab->purchase_request_id)
-            ->where('b.company_id', $companyId)
+            ->where('b.company_id', (string) $companyId)
             ->exists();
 
         if (!$ok) abort(404, 'Not found');

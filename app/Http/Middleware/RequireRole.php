@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\AuthUser;
 use Closure;
 use Illuminate\Http\Request;
 
@@ -13,36 +14,26 @@ class RequireRole
 
         if (!$user) {
             return response()->json([
-                'error' => [
-                    'code' => 'unauthenticated',
-                    'message' => 'Unauthenticated',
-                ]
+                'error' => ['code' => 'unauthenticated', 'message' => 'Unauthenticated']
             ], 401);
         }
 
-        // Normalize required roles:
-        // Accept both:
-        // - requireRole:CHEF,ACCOUNTING,DC_ADMIN  (single arg with commas)
-        // - requireRole:CHEF requireRole:ACCOUNTING (multiple args)
+        // Normalize required roles: allow commas + multiple args
         $requiredRoles = [];
         foreach ($roles as $r) {
-            foreach (explode(',', (string)$r) as $piece) {
-                $piece = trim($piece);
+            foreach (explode(',', (string) $r) as $piece) {
+                $piece = strtoupper(trim($piece));
                 if ($piece !== '') $requiredRoles[] = $piece;
             }
         }
         $requiredRoles = array_values(array_unique($requiredRoles));
 
-        // Normalize user roles
-        $userRoles = [];
-
-        if (isset($user->roles) && is_array($user->roles)) {
-            $userRoles = $user->roles;
-        } elseif (method_exists($user, 'roles')) {
-            $userRoles = $user->roles()->pluck('code')->all();
-        } elseif (method_exists($user, 'userRoles')) {
-            $userRoles = $user->userRoles()->pluck('role_code')->all();
-        }
+        // Single source of truth for user roles
+        $userRoles = array_map(
+            fn($x) => strtoupper(trim((string)$x)),
+            AuthUser::roleCodes($user)
+        );
+        $userRoles = array_values(array_unique(array_filter($userRoles, fn($x) => $x !== '')));
 
         foreach ($requiredRoles as $required) {
             if (in_array($required, $userRoles, true)) {

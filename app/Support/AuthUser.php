@@ -16,10 +16,6 @@ class AuthUser
         return $u;
     }
 
-    /**
-     * Company is resolved by RequireCompanyContext (X-Company-Id header),
-     * stored in request attributes as 'company_id'. Fallback to user company_id.
-     */
     public static function companyId(Request $request): string
     {
         $u = self::get($request);
@@ -28,35 +24,33 @@ class AuthUser
         return (string) $cid;
     }
 
-    /**
-     * Strong tenant guard: request company MUST equal user company_id.
-     * Use this when you want zero ambiguity in multi-tenant controllers.
-     */
     public static function requireCompanyContext(Request $request): string
     {
         $u = self::get($request);
         $cid = self::companyId($request);
 
         if (empty($u->company_id)) abort(403, 'User has no company_id');
-        if ((string)$u->company_id !== (string)$cid) abort(403, 'Company mismatch');
+        if ((string) $u->company_id !== (string) $cid) abort(403, 'Company mismatch');
 
         return (string) $cid;
     }
 
-    /**
-     * Normalized role codes.
-     */
     public static function roleCodes(Profile $u): array
     {
+        $roles = [];
+
+        // Prefer Profile helper (DB roles OR injected roles)
         if (method_exists($u, 'roleCodes')) {
             $rc = $u->roleCodes();
-            return is_array($rc) ? $rc : [];
+            if (is_array($rc)) $roles = $rc;
+        } elseif (isset($u->roles) && is_array($u->roles)) {
+            $roles = $u->roles;
         }
 
-        // fallback patterns if needed later
-        if (isset($u->roles) && is_array($u->roles)) return $u->roles;
+        $roles = array_map(fn ($r) => strtoupper(trim((string) $r)), $roles);
+        $roles = array_values(array_unique(array_filter($roles, fn ($r) => $r !== '')));
 
-        return [];
+        return $roles;
     }
 
     public static function isCompanyWide(Profile $u): bool
@@ -65,12 +59,6 @@ class AuthUser
         return in_array('ACCOUNTING', $roles, true) || in_array('KA_SPPG', $roles, true);
     }
 
-    /**
-     * Returns all branch IDs the user can access for the given company.
-     * - ACCOUNTING / KA_SPPG => all branches in company
-     * - else => branches listed in profile_branch_access
-     * - fallback => user's own branch (if in company)
-     */
     public static function allowedBranchIds(Request $request): array
     {
         $u = self::get($request);
@@ -96,10 +84,10 @@ class AuthUser
                 ->where('company_id', $companyId)
                 ->exists();
 
-            if ($exists) $branchIds = [$u->branch_id];
+            if ($exists) $branchIds = [(string) $u->branch_id];
         }
 
-        // Final defense: filter branchIds to only those within company
+        // Final defense: only branches in company
         if (!empty($branchIds)) {
             $branchIds = DB::table('branches')
                 ->where('company_id', $companyId)
@@ -111,46 +99,43 @@ class AuthUser
         return $branchIds;
     }
 
-    /**
-     * Resolves the branch scope for the request, using:
-     * - X-Branch-Id header if present
-     * - else fallback to user.profile.branch_id
-     *
-     * Enforces: requested branch must be within allowedBranchIds for company.
-     */
     public static function requireBranchAccess(Request $request): string
     {
         $u = self::get($request);
         $companyId = self::companyId($request);
 
-        $requestedBranchId = $request->header('X-Branch-Id');
-        $branchId = $requestedBranchId ?: ($u->branch_id ?? null);
+        $requestedBranchId = (string) $request->header('X-Branch-Id', '');
+        $branchId = $requestedBranchId !== '' ? $requestedBranchId : ($u->branch_id ?? null);
 
         if (!$branchId) abort(403, 'Branch not assigned');
 
         $allowed = self::allowedBranchIds($request);
-        if (empty($allowed) || !in_array($branchId, $allowed, true)) {
+        if (empty($allowed) || !in_array((string) $branchId, $allowed, true)) {
             abort(403, 'Forbidden (no branch access)');
         }
 
         // defense-in-depth: ensure branch belongs to company
         $exists = DB::table('branches')
-            ->where('id', $branchId)
+            ->where('id', (string) $branchId)
             ->where('company_id', $companyId)
             ->exists();
 
         if (!$exists) abort(403, 'Forbidden (branch not in company)');
 
-        $request->attributes->set('branch_id', $branchId);
+        $request->attributes->set('branch_id', (string) $branchId);
 
         return (string) $branchId;
     }
 
     public static function requireRole(Profile $u, array $roles): void
     {
+        $userRoles = self::roleCodes($u);
+
         foreach ($roles as $r) {
-            if ($u->hasRole($r)) return;
+            $r = strtoupper(trim((string) $r));
+            if ($r !== '' && in_array($r, $userRoles, true)) return;
         }
+
         abort(403, 'Forbidden (role)');
     }
 

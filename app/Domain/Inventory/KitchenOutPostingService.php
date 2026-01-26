@@ -2,6 +2,7 @@
 
 namespace App\Domain\Inventory;
 
+use App\Domain\Accounting\KitchenOutAccountingService;
 use App\Support\Audit;
 use App\Support\AuthUser;
 use Illuminate\Http\Request;
@@ -63,7 +64,7 @@ class KitchenOutPostingService
 
             $status = (string) ($ko->status ?? 'DRAFT');
 
-            // Idempotent replay
+            // Idempotent replay: do NOT post again
             if ($status === 'POSTED') {
                 return $this->buildResponse((string) $ko->id, (string) $companyId, $request);
             }
@@ -164,7 +165,7 @@ class KitchenOutPostingService
                         ? $remainingNeed
                         : $lotRemaining;
 
-                    // HARD INTEGRITY GUARD — never allow negative lots
+                    // Integrity guard: never allow negative lots
                     if (bccomp($lotRemaining, $consume, 3) < 0) {
                         throw new HttpException(
                             409,
@@ -174,7 +175,6 @@ class KitchenOutPostingService
 
                     $newRemaining = bcsub($lotRemaining, $consume, 3);
 
-                    // Update lot remaining_qty
                     DB::table('inventory_lots')
                         ->where('id', (string) $lot->id)
                         ->update([
@@ -199,8 +199,7 @@ class KitchenOutPostingService
                         'branch_id'         => (string) $ko->branch_id,
                         'inventory_item_id' => $inventoryItemId,
                         'type'              => 'OUT',
-                        'qty'               => $signedOutQty, // negative
-
+                        'qty'               => $signedOutQty,
                         'inventory_lot_id'  => (string) $lot->id,
 
                         'source_type'       => 'KITCHEN_OUT',
@@ -248,8 +247,8 @@ class KitchenOutPostingService
                     ->where('id', (string) $inventoryItemId)
                     ->where('branch_id', (string) $ko->branch_id)
                     ->update([
-                        'on_hand'     => $sum,
-                        'updated_at'  => $now,
+                        'on_hand'    => $sum,
+                        'updated_at' => $now,
                     ]);
 
                 $onHandRecomputed[] = [
@@ -258,7 +257,7 @@ class KitchenOutPostingService
                 ];
             }
 
-            // 7) Mark POSTED (terminal)
+            // 7) Mark POSTED (still inside TX)
             DB::table('kitchen_outs')
                 ->where('id', (string) $ko->id)
                 ->update([
@@ -268,18 +267,25 @@ class KitchenOutPostingService
                     'updated_at' => $now,
                 ]);
 
+            // Auto-post accounting journal (atomic with FIFO depletion + movements)
+            $acctSvc = app(KitchenOutAccountingService::class);
+            $acctRes = $acctSvc->postForKitchenOut((string) $ko->id, $request);
+
+            $accountingJournalId = $this->extractJournalId($acctRes);
+
             // 8) Audit
             Audit::log($request, 'post', 'kitchen_outs', (string) $ko->id, [
-                'from'               => 'SUBMITTED',
-                'to'                 => 'POSTED',
-                'branch_id'          => (string) $ko->branch_id,
-                'out_number'         => (string) ($ko->out_number ?? ''),
-                'out_at'             => (string) ($ko->out_at ?? ''),
-                'movement_ids'       => $movementIds,
-                'fifo_lot_updates'   => $lotUpdates,
-                'consumption'        => $consumption,
-                'on_hand_recomputed' => $onHandRecomputed,
-                'idempotency_key'    => $idempotencyKey,
+                'from'                  => 'SUBMITTED',
+                'to'                    => 'POSTED',
+                'branch_id'             => (string) $ko->branch_id,
+                'out_number'            => (string) ($ko->out_number ?? ''),
+                'out_at'                => (string) ($ko->out_at ?? ''),
+                'movement_ids'          => $movementIds,
+                'fifo_lot_updates'      => $lotUpdates,
+                'consumption'           => $consumption,
+                'on_hand_recomputed'    => $onHandRecomputed,
+                'accounting_journal_id' => $accountingJournalId,
+                'idempotency_key'       => $idempotencyKey,
             ]);
 
             return $this->buildResponse((string) $ko->id, (string) $companyId, $request);
@@ -323,11 +329,11 @@ class KitchenOutPostingService
             ->get();
 
         return [
-            'id'         => (string) $ko->id,
-            'branch_id'  => (string) $ko->branch_id,
-            'out_number' => (string) ($ko->out_number ?? ''),
-            'status'     => (string) ($ko->status ?? ''),
-            'out_at'     => $ko->out_at ?? null,
+            'id'           => (string) $ko->id,
+            'branch_id'    => (string) $ko->branch_id,
+            'out_number'   => (string) ($ko->out_number ?? ''),
+            'status'       => (string) ($ko->status ?? ''),
+            'out_at'       => $ko->out_at ?? null,
 
             'created_by'   => $ko->created_by ?? null,
             'submitted_at' => $ko->submitted_at ?? null,
@@ -335,14 +341,14 @@ class KitchenOutPostingService
             'posted_at'    => $ko->posted_at ?? null,
             'posted_by'    => $ko->posted_by ?? null,
 
-            'notes'      => $ko->notes ?? null,
-            'meta'       => $ko->meta ?? null,
+            'notes'        => $ko->notes ?? null,
+            'meta'         => $ko->meta ?? null,
 
-            'created_at' => $ko->created_at ?? null,
-            'updated_at' => $ko->updated_at ?? null,
+            'created_at'   => $ko->created_at ?? null,
+            'updated_at'   => $ko->updated_at ?? null,
 
-            'lines'      => $lines,
-            'movements'  => $moves,
+            'lines'        => $lines,
+            'movements'    => $moves,
         ];
     }
 
@@ -366,6 +372,38 @@ class KitchenOutPostingService
         );
 
         return $this->dec3((string) ($row->lots_sum ?? '0'));
+    }
+
+    /**
+     * Same extractor as GR service.
+     */
+    private function extractJournalId($acctRes): string
+    {
+        if (is_string($acctRes)) {
+            return $acctRes;
+        }
+
+        if (is_array($acctRes)) {
+            if (!empty($acctRes['journal_id'])) return (string) $acctRes['journal_id'];
+
+            if (!empty($acctRes['journal'])) {
+                $j = $acctRes['journal'];
+                if (is_object($j) && isset($j->id)) return (string) $j->id;
+                if (is_array($j) && isset($j['id'])) return (string) $j['id'];
+            }
+
+            if (!empty($acctRes['id'])) return (string) $acctRes['id'];
+        }
+
+        if (is_object($acctRes)) {
+            if (isset($acctRes->journal_id)) return (string) $acctRes->journal_id;
+            if (isset($acctRes->id)) return (string) $acctRes->id;
+            if (isset($acctRes->journal) && is_object($acctRes->journal) && isset($acctRes->journal->id)) {
+                return (string) $acctRes->journal->id;
+            }
+        }
+
+        return '';
     }
 
     private function dec3(string $n): string

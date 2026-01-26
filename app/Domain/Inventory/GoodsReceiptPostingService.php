@@ -2,6 +2,7 @@
 
 namespace App\Domain\Inventory;
 
+use App\Domain\Accounting\GoodsReceiptAccountingService;
 use App\Support\Audit;
 use App\Support\AuthUser;
 use Illuminate\Http\Request;
@@ -37,10 +38,7 @@ class GoodsReceiptPostingService
 
         return DB::transaction(function () use ($grId, $request, $u, $companyId, $idempotencyKey) {
 
-            /**
-             * Lock GR header + join branches to fetch company_id deterministically.
-             * This fixes: Undefined property stdClass::$company_id
-             */
+            // Lock GR header + join branches to fetch company_id deterministically
             $gr = DB::table('goods_receipts as gr')
                 ->join('branches as b', 'b.id', '=', 'gr.branch_id')
                 ->where('gr.id', (string) $grId)
@@ -66,11 +64,7 @@ class GoodsReceiptPostingService
                 throw new HttpException(403, 'No access to this branch');
             }
 
-            /**
-             * Idempotency:
-             * - If already terminal, do NOT attempt to post inventory again.
-             * Your controller already has statuses like RECEIVED/DISCREPANCY.
-             */
+            // Idempotent: if already terminal, do NOT repost inventory nor accounting
             $status = (string) $gr->status;
             if (in_array($status, ['RECEIVED', 'DISCREPANCY'], true)) {
                 return $this->buildResponse((string) $gr->id, (string) $companyId);
@@ -95,7 +89,7 @@ class GoodsReceiptPostingService
                 ]);
             }
 
-            // Preload PO currency + item unit_price for costing (optional, but production-grade)
+            // Preload PO currency + item unit_price for costing
             $po = DB::table('purchase_orders as po')
                 ->join('branches as b', 'b.id', '=', 'po.branch_id')
                 ->where('po.id', (string) $gr->purchase_order_id)
@@ -138,7 +132,6 @@ class GoodsReceiptPostingService
                 $unit = $it->unit !== null ? trim((string) $it->unit) : null;
                 if ($unit === '') $unit = null;
 
-                // Received qty must be > 0 to create lot/move; allow zeros (skip) to support partial receipts
                 $qty = $this->dec3((string) $it->received_qty);
                 if (bccomp($qty, '0.000', 3) <= 0) {
                     throw ValidationException::withMessages([
@@ -192,7 +185,7 @@ class GoodsReceiptPostingService
                         ->first();
                 }
 
-                // Create inventory item if not found
+                // Create inventory item if not found (IN flow)
                 if (!$invItem) {
                     $invItemId = (string) Str::uuid();
 
@@ -227,10 +220,9 @@ class GoodsReceiptPostingService
 
                 $before = $this->sumLots((string) $gr->branch_id, (string) $invItem->id);
 
-                // Create lot for this GR item line (one line => one lot; deterministic)
+                // One line => one lot; deterministic
                 $lotId = (string) Str::uuid();
 
-                // lot_code: LOT-{GR_NUMBER}-{NN}
                 $grNumber = (string) $gr->gr_number;
                 if ($grNumber === '') {
                     throw new HttpException(500, 'goods_receipts.gr_number is required');
@@ -257,7 +249,7 @@ class GoodsReceiptPostingService
                     'updated_at'            => $now,
                 ]);
 
-                // Ledger movement (IN => signed +)
+                // Movement (IN => signed +)
                 $moveId = (string) Str::uuid();
 
                 DB::table('inventory_movements')->insert([
@@ -288,42 +280,49 @@ class GoodsReceiptPostingService
                 $lotIds[] = $lotId;
 
                 $linesForAudit[] = [
-                    'seq'               => $seq,
-                    'goods_receipt_item_id' => (string) $it->id,
-                    'purchase_order_item_id' => (string) $it->purchase_order_item_id,
-                    'inventory_item_id' => (string) $invItem->id,
-                    'item_name'         => $itemName,
-                    'unit'              => $unit,
-                    'qty'               => $qty,
-                    'on_hand_before'    => $before,
-                    'on_hand_after'     => $after,
-                    'lot_id'            => $lotId,
-                    'lot_code'          => $lotCode,
-                    'movement_id'       => $moveId,
+                    'seq'                    => $seq,
+                    'goods_receipt_item_id'   => (string) $it->id,
+                    'purchase_order_item_id'  => (string) $it->purchase_order_item_id,
+                    'inventory_item_id'       => (string) $invItem->id,
+                    'item_name'              => $itemName,
+                    'unit'                   => $unit,
+                    'qty'                    => $qty,
+                    'on_hand_before'         => $before,
+                    'on_hand_after'          => $after,
+                    'lot_id'                 => $lotId,
+                    'lot_code'               => $lotCode,
+                    'movement_id'            => $moveId,
                 ];
 
                 $seq++;
             }
 
-            // Finalize GR header + mark inventory_posted (you have these columns)
+            // Finalize GR header (still inside TX)
             DB::table('goods_receipts')
                 ->where('id', (string) $gr->id)
                 ->update([
-                    'status'             => 'RECEIVED',
-                    'received_at'        => $now,
-                    'received_by'        => (string) $u->id,
-                    'inventory_posted'   => true,
-                    'inventory_posted_at'=> $now,
-                    'updated_at'         => $now,
+                    'status'               => 'RECEIVED',
+                    'received_at'          => $now,
+                    'received_by'          => (string) $u->id,
+                    'inventory_posted'     => true,
+                    'inventory_posted_at'  => $now,
+                    'updated_at'           => $now,
                 ]);
 
+            // Auto-post accounting journal (atomic with inventory posting)
+            $acctSvc = app(GoodsReceiptAccountingService::class);
+            $acctRes = $acctSvc->postForGoodsReceipt((string) $gr->id, $request);
+
+            $accountingJournalId = $this->extractJournalId($acctRes);
+
             Audit::log($request, 'receive', 'goods_receipts', (string) $gr->id, [
-                'gr_number'        => (string) $gr->gr_number,
-                'branch_id'        => (string) $gr->branch_id,
-                'lot_ids'          => $lotIds,
-                'movement_ids'     => $movementIds,
-                'lines'            => $linesForAudit,
-                'idempotency_key'  => $idempotencyKey,
+                'gr_number'              => (string) $gr->gr_number,
+                'branch_id'              => (string) $gr->branch_id,
+                'lot_ids'                => $lotIds,
+                'movement_ids'           => $movementIds,
+                'lines'                  => $linesForAudit,
+                'accounting_journal_id'  => $accountingJournalId,
+                'idempotency_key'        => $idempotencyKey,
             ]);
 
             return $this->buildResponse((string) $gr->id, (string) $companyId);
@@ -357,18 +356,18 @@ class GoodsReceiptPostingService
             ->get();
 
         return [
-            'id'                 => (string) $gr->id,
-            'company_id'         => (string) $gr->company_id,
-            'branch_id'          => (string) $gr->branch_id,
-            'purchase_order_id'  => (string) $gr->purchase_order_id,
-            'gr_number'          => (string) $gr->gr_number,
-            'status'             => (string) $gr->status,
-            'received_at'        => $gr->received_at,
-            'received_by'        => $gr->received_by,
-            'inventory_posted'   => (bool) $gr->inventory_posted,
-            'inventory_posted_at'=> $gr->inventory_posted_at,
-            'items'              => $items,
-            'lots'               => $lots,
+            'id'                  => (string) $gr->id,
+            'company_id'          => (string) $gr->company_id,
+            'branch_id'           => (string) $gr->branch_id,
+            'purchase_order_id'   => (string) $gr->purchase_order_id,
+            'gr_number'           => (string) $gr->gr_number,
+            'status'              => (string) $gr->status,
+            'received_at'         => $gr->received_at,
+            'received_by'         => $gr->received_by,
+            'inventory_posted'    => (bool) $gr->inventory_posted,
+            'inventory_posted_at' => $gr->inventory_posted_at,
+            'items'               => $items,
+            'lots'                => $lots,
         ];
     }
 
@@ -388,7 +387,7 @@ class GoodsReceiptPostingService
             [$branchId, $inventoryItemId]
         );
 
-        return $this->dec3((string) $row->lots_sum);
+        return $this->dec3((string) ($row->lots_sum ?? '0'));
     }
 
     private function recomputeOnHandFromLots(string $branchId, string $inventoryItemId): string
@@ -403,6 +402,42 @@ class GoodsReceiptPostingService
         );
 
         return $sum;
+    }
+
+    /**
+     * Extract journal_id from any reasonable return type:
+     * - string journal uuid
+     * - ['journal_id' => '...']
+     * - ['journal' => (object|array with id)]
+     * - stdClass with ->id or ->journal_id
+     */
+    private function extractJournalId($acctRes): string
+    {
+        if (is_string($acctRes)) {
+            return $acctRes;
+        }
+
+        if (is_array($acctRes)) {
+            if (!empty($acctRes['journal_id'])) return (string) $acctRes['journal_id'];
+
+            if (!empty($acctRes['journal'])) {
+                $j = $acctRes['journal'];
+                if (is_object($j) && isset($j->id)) return (string) $j->id;
+                if (is_array($j) && isset($j['id'])) return (string) $j['id'];
+            }
+
+            if (!empty($acctRes['id'])) return (string) $acctRes['id'];
+        }
+
+        if (is_object($acctRes)) {
+            if (isset($acctRes->journal_id)) return (string) $acctRes->journal_id;
+            if (isset($acctRes->id)) return (string) $acctRes->id;
+            if (isset($acctRes->journal) && is_object($acctRes->journal) && isset($acctRes->journal->id)) {
+                return (string) $acctRes->journal->id;
+            }
+        }
+
+        return '';
     }
 
     /**

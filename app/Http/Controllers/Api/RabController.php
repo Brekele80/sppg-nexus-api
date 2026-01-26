@@ -2,14 +2,15 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Models\PurchaseRequest;
 use App\Models\RabLineItem;
 use App\Models\RabVersion;
-use App\Models\PurchaseRequest;
+use App\Support\Audit;
+use App\Support\AuthUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use App\Support\AuthUser;
-use App\Support\Audit;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class RabController extends BaseApiController
 {
@@ -18,17 +19,11 @@ class RabController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
 
-        $companyId = AuthUser::companyId($request);
-        $allowed = AuthUser::allowedBranchIds($request);
+        // Strong tenant boundary (must match user company)
+        $companyId = AuthUser::requireCompanyContext($request);
 
-        $pr = PurchaseRequest::query()
-            ->where('purchase_requests.id', $prId)
-            ->join('branches as b', 'b.id', '=', 'purchase_requests.branch_id')
-            ->where('b.company_id', $companyId)
-            ->select('purchase_requests.*')
-            ->firstOrFail();
-
-        if (!in_array($pr->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
+        // Require branch context (header OR profile.branch_id), and enforce entitlement
+        $branchId = AuthUser::requireBranchAccess($request);
 
         $data = $request->validate([
             'currency' => 'nullable|string|max:10',
@@ -39,16 +34,38 @@ class RabController extends BaseApiController
             'line_items.*.unit_price' => 'required|numeric|min:0',
         ]);
 
+        // Load PR guarded by tenant boundary (branch must belong to company)
+        $pr = PurchaseRequest::query()
+            ->where('purchase_requests.id', $prId)
+            ->join('branches as b', 'b.id', '=', 'purchase_requests.branch_id')
+            ->where('b.company_id', $companyId)
+            ->select('purchase_requests.*')
+            ->first();
+
+        if (!$pr) {
+            // no cross-tenant leak
+            throw new HttpException(404, 'Not found');
+        }
+
+        // Must have access to PR's branch; we also require branch context,
+        // but PR could be another branch in the company that the user can access.
+        $allowed = AuthUser::allowedBranchIds($request);
+        if (!in_array((string) $pr->branch_id, $allowed, true)) {
+            throw new HttpException(403, 'Forbidden');
+        }
+
         return DB::transaction(function () use ($request, $u, $pr, $data) {
+
             $maxVer = RabVersion::where('purchase_request_id', $pr->id)->max('version_no') ?? 0;
-            $verNo = $maxVer + 1;
+            $verNo = (int) $maxVer + 1;
+
             $rabId = (string) Str::uuid();
 
             $rab = RabVersion::create([
                 'id' => $rabId,
                 'purchase_request_id' => $pr->id,
                 'version_no' => $verNo,
-                'created_by' => $u->id,
+                'created_by' => (string) $u->id,
                 'status' => 'DRAFT',
                 'currency' => $data['currency'] ?? 'IDR',
                 'subtotal' => 0,
@@ -59,10 +76,10 @@ class RabController extends BaseApiController
             $this->replaceLineItems($rab, $data['line_items']);
 
             Audit::log($request, 'create', 'rab_versions', $rab->id, [
-                'purchase_request_id' => $pr->id,
-                'branch_id' => $pr->branch_id,
+                'purchase_request_id' => (string) $pr->id,
+                'branch_id' => (string) $pr->branch_id,
                 'version_no' => $verNo,
-                'currency' => $rab->currency,
+                'currency' => (string) $rab->currency,
                 'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
             ]);
 
@@ -73,9 +90,10 @@ class RabController extends BaseApiController
     public function show(Request $request, string $id)
     {
         $this->authUser($request);
-        $companyId = AuthUser::companyId($request);
+        $companyId = AuthUser::requireCompanyContext($request);
 
         $rab = $this->loadRabGuarded($companyId, $id, $request);
+
         return response()->json($rab);
     }
 
@@ -83,7 +101,10 @@ class RabController extends BaseApiController
     {
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
-        $companyId = AuthUser::companyId($request);
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        // Require branch scope for mutation endpoints
+        AuthUser::requireBranchAccess($request);
 
         $rab = $this->loadRabGuarded($companyId, $id, $request);
         $rab->load('lineItems');
@@ -102,6 +123,7 @@ class RabController extends BaseApiController
         ]);
 
         return DB::transaction(function () use ($request, $rab, $data) {
+
             $before = [
                 'currency' => $rab->currency,
                 'subtotal' => (float) $rab->subtotal,
@@ -110,7 +132,7 @@ class RabController extends BaseApiController
                 'line_items_count' => $rab->lineItems->count(),
             ];
 
-            if (isset($data['currency'])) {
+            if (array_key_exists('currency', $data) && $data['currency']) {
                 $rab->currency = $data['currency'];
                 $rab->save();
             }
@@ -140,9 +162,12 @@ class RabController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
 
-        $companyId = AuthUser::companyId($request);
-        $rab = $this->loadRabGuarded($companyId, $id, $request);
+        $companyId = AuthUser::requireCompanyContext($request);
 
+        // Require branch scope for mutation endpoints
+        AuthUser::requireBranchAccess($request);
+
+        $rab = $this->loadRabGuarded($companyId, $id, $request);
         $rab->load('lineItems');
 
         if ($rab->status !== 'DRAFT') {
@@ -162,7 +187,7 @@ class RabController extends BaseApiController
             'to' => 'SUBMITTED',
             'submitted_at' => (string) $rab->submitted_at,
             'total' => (float) $rab->total,
-            'currency' => $rab->currency,
+            'currency' => (string) $rab->currency,
             'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
         ]);
 
@@ -174,7 +199,11 @@ class RabController extends BaseApiController
         $u = $this->authUser($request);
         $this->requireRole($u, ['PURCHASE_CABANG']);
 
-        $companyId = AuthUser::companyId($request);
+        $companyId = AuthUser::requireCompanyContext($request);
+
+        // Require branch scope for mutation endpoints
+        AuthUser::requireBranchAccess($request);
+
         $rab = $this->loadRabGuarded($companyId, $id, $request);
         $rab->load('lineItems');
 
@@ -183,14 +212,15 @@ class RabController extends BaseApiController
         }
 
         return DB::transaction(function () use ($request, $u, $rab) {
+
             $maxVer = RabVersion::where('purchase_request_id', $rab->purchase_request_id)->max('version_no') ?? 0;
             $newId = (string) Str::uuid();
 
             $newRab = RabVersion::create([
                 'id' => $newId,
                 'purchase_request_id' => $rab->purchase_request_id,
-                'version_no' => $maxVer + 1,
-                'created_by' => $u->id,
+                'version_no' => (int) $maxVer + 1,
+                'created_by' => (string) $u->id,
                 'status' => 'DRAFT',
                 'currency' => $rab->currency ?? 'IDR',
                 'subtotal' => 0,
@@ -198,20 +228,18 @@ class RabController extends BaseApiController
                 'total' => 0,
             ]);
 
-            $items = $rab->lineItems->map(function ($li) {
-                return [
-                    'item_name' => $li->item_name,
-                    'unit' => $li->unit,
-                    'qty' => $li->qty,
-                    'unit_price' => $li->unit_price,
-                ];
-            })->all();
+            $items = $rab->lineItems->map(fn ($li) => [
+                'item_name' => $li->item_name,
+                'unit' => $li->unit,
+                'qty' => $li->qty,
+                'unit_price' => $li->unit_price,
+            ])->all();
 
             $this->replaceLineItems($newRab, $items);
 
             Audit::log($request, 'revise', 'rab_versions', $newRab->id, [
-                'from_rab_id' => $rab->id,
-                'purchase_request_id' => $rab->purchase_request_id,
+                'from_rab_id' => (string) $rab->id,
+                'purchase_request_id' => (string) $rab->purchase_request_id,
                 'new_version_no' => (int) $newRab->version_no,
                 'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
             ]);
@@ -268,7 +296,7 @@ class RabController extends BaseApiController
         if (!$pr) abort(404, 'Not found');
 
         $allowed = AuthUser::allowedBranchIds($request);
-        if (!in_array($pr->branch_id, $allowed, true)) abort(403, 'Forbidden (no branch access)');
+        if (!in_array((string) $pr->branch_id, $allowed, true)) abort(403, 'Forbidden');
 
         return $rab;
     }

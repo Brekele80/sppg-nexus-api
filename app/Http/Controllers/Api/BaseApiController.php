@@ -4,25 +4,25 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Profile;
+use App\Support\AuthUser;
 use Illuminate\Http\Request;
 
 class BaseApiController extends Controller
 {
     protected function authUser(Request $request): Profile
     {
-        /** @var Profile $u */
+        /** @var Profile|null $u */
         $u = $request->attributes->get('auth_user');
-        if (!$u) {
-            abort(401, 'Unauthenticated');
-        }
+        if (!$u) abort(401, 'Unauthenticated');
         return $u;
     }
 
+    /**
+     * ANY-OF role check (matches your middleware usage: requireRole:CHEF,ACCOUNTING,...)
+     */
     protected function requireRole(Profile $u, array $roles): void
     {
-        foreach ($roles as $r) {
-            if ($u->hasRole($r)) return;
-        }
-        abort(403, 'Forbidden');
+        // Delegate to canonical role resolution (JWT-injected / model helper)
+        AuthUser::requireRole($u, $roles);
     }
 }

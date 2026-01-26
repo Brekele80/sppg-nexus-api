@@ -2,7 +2,6 @@
 
 namespace App\Support;
 
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AccessScope
@@ -29,15 +28,17 @@ class AccessScope
      */
     public static function assertBranchAccess(object $u, string $branchId): void
     {
+        if (empty($u->company_id) || empty($u->id)) {
+            abort(403, 'Forbidden (no identity)');
+        }
+
         $ok = DB::table('profile_branch_access')
             ->where('company_id', $u->company_id)
             ->where('profile_id', $u->id)
             ->where('branch_id', $branchId)
             ->exists();
 
-        if (!$ok) {
-            abort(403, 'Forbidden (no branch access)');
-        }
+        if (!$ok) abort(403, 'Forbidden (no branch access)');
     }
 
     /**
@@ -49,8 +50,8 @@ class AccessScope
         $ids = self::branchIdsForUser($u);
         if (!$ids) return null;
 
-        if (!empty($u->branch_id) && in_array($u->branch_id, $ids, true)) return $u->branch_id;
+        if (!empty($u->branch_id) && in_array($u->branch_id, $ids, true)) return (string) $u->branch_id;
 
-        return $ids[0];
+        return (string) $ids[0];
     }
 }

@@ -20,6 +20,15 @@ class DocumentNo
         string $prefix,
         string $column = 'adjustment_no'
     ): string {
+        // Defensive: only allow safe identifier chars for column/table
+        // (You control these in code; this prevents accidental injection.)
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $table)) {
+            abort(500, 'Invalid table identifier');
+        }
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $column)) {
+            abort(500, 'Invalid column identifier');
+        }
+
         $period = now()->format('Ym'); // 202601
         $counterKey = "{$table}:{$prefix}:{$period}";
 
@@ -33,25 +42,23 @@ class DocumentNo
                 ->first();
 
             if (!$row) {
-                // Bootstrap from existing docs to avoid starting at 1 when docs already exist
-                // Find max numeric suffix from existing doc numbers for this prefix+period.
-                // Example docno: SA-202601-000123
                 $like = "{$prefix}-{$period}-%";
 
+                // Note: identifiers cannot be bound, so we validated $column above.
                 $max = DB::table($table)
                     ->where('company_id', $companyId)
                     ->where($column, 'like', $like)
                     ->selectRaw("max((right({$column}, 6))::int) as m")
                     ->value('m');
 
-                $start = $max ? ((int)$max + 1) : 1;
+                $start = $max ? ((int) $max + 1) : 1;
 
                 // next_no stores the NEXT number to be issued after we allocate $start
                 DB::table('document_counters')->insert([
-                    'company_id'  => $companyId,
-                    'key'         => $counterKey,
-                    'next_no'     => $start + 1,
-                    'updated_at'  => now(),
+                    'company_id' => $companyId,
+                    'key'        => $counterKey,
+                    'next_no'    => $start + 1,
+                    'updated_at' => now(),
                 ]);
 
                 return self::format($prefix, $period, $start);

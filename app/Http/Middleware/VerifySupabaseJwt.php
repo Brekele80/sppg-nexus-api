@@ -38,7 +38,7 @@ class VerifySupabaseJwt
                 ], 401);
             }
 
-            // ---- audience (Supabase can be string or array)
+            // ---- audience
             $expectedAud = config('services.supabase.audience');
             if ($expectedAud) {
                 $aud = $decoded->aud ?? null;
@@ -64,11 +64,10 @@ class VerifySupabaseJwt
                 ], 401);
             }
 
-            // Token fields (best-effort)
+            // Token fields
             $email = isset($decoded->email) && is_string($decoded->email) ? $decoded->email : '';
             $fullName = '';
 
-            // Supabase often stores this in user_metadata
             if (isset($decoded->user_metadata) && is_object($decoded->user_metadata)) {
                 $um = $decoded->user_metadata;
                 if (isset($um->full_name) && is_string($um->full_name)) {
@@ -78,7 +77,10 @@ class VerifySupabaseJwt
                 }
             }
 
-            // Determine company_id from token if you later add it as a custom claim
+            // Extract roles from JWT (critical!)
+            $jwtRoles = $this->extractRoles($decoded);
+
+            // Determine company_id from token if later used
             $companyIdFromToken = $this->extractCompanyId($decoded);
 
             $profile = DB::transaction(function () use ($sub, $email, $fullName, $companyIdFromToken) {
@@ -90,16 +92,13 @@ class VerifySupabaseJwt
                         'email' => $email,
                         'full_name' => $fullName ?: null,
                         'is_active' => true,
-                        // company_id will be fixed below
                     ]
                 );
 
                 if (!$profile->is_active) {
-                    // Let caller return 403 cleanly
                     return $profile;
                 }
 
-                // Keep profile fields fresh (non-destructive)
                 $dirty = false;
 
                 if ($email && $profile->email !== $email) {
@@ -115,27 +114,21 @@ class VerifySupabaseJwt
                 if (empty($profile->company_id)) {
                     $resolvedCompanyId = null;
 
-                    // Prefer token company_id if present
                     if ($companyIdFromToken) {
                         $resolvedCompanyId = $companyIdFromToken;
                     }
 
-                    // Else, infer from branch_id if set
                     if (!$resolvedCompanyId && !empty($profile->branch_id)) {
                         $branchCompanyId = DB::table('branches')->where('id', $profile->branch_id)->value('company_id');
-                        if ($branchCompanyId) {
-                            $resolvedCompanyId = $branchCompanyId;
-                        }
+                        if ($branchCompanyId) $resolvedCompanyId = $branchCompanyId;
                     }
 
-                    // Else, fall back to DEFAULT company or first company
                     if (!$resolvedCompanyId) {
                         $resolvedCompanyId = DB::table('companies')->where('code', 'DEFAULT')->value('id')
                             ?: DB::table('companies')->orderBy('created_at')->value('id');
                     }
 
                     if (!$resolvedCompanyId) {
-                        // This should never happen after your migrations, but keep it safe.
                         throw new \RuntimeException('No company exists to assign to profile.');
                     }
 
@@ -146,15 +139,13 @@ class VerifySupabaseJwt
                 // If branch_id exists, enforce branch.company_id == profile.company_id
                 if (!empty($profile->branch_id)) {
                     $branchCompanyId = DB::table('branches')->where('id', $profile->branch_id)->value('company_id');
-
                     if ($branchCompanyId && $branchCompanyId !== $profile->company_id) {
-                        // This indicates data inconsistency (user assigned to wrong-tenant branch).
-                        // Production stance: block access rather than silently switching.
                         throw new \RuntimeException('Branch company mismatch for profile.');
                     }
 
                     // Ensure profile_branch_access mapping exists
                     $exists = DB::table('profile_branch_access')
+                        ->where('company_id', $profile->company_id)
                         ->where('profile_id', $profile->id)
                         ->where('branch_id', $profile->branch_id)
                         ->exists();
@@ -171,9 +162,7 @@ class VerifySupabaseJwt
                     }
                 }
 
-                if ($dirty) {
-                    $profile->save();
-                }
+                if ($dirty) $profile->save();
 
                 return $profile;
             });
@@ -187,25 +176,54 @@ class VerifySupabaseJwt
             // Attach to request
             $request->attributes->set('auth_user', $profile);
 
+            // IMPORTANT: attach roles to Profile so RequireRole can see them
+            $profile->setAttribute('roles', $jwtRoles);
+
+            // Optional also store on request
+            $request->attributes->set('auth_roles', $jwtRoles);
+
             return $next($request);
 
         } catch (\Throwable $e) {
-            // If you want more debug in local:
-            // logger()->error('auth_invalid_token', ['err' => $e->getMessage()]);
             return response()->json([
                 'error' => ['code' => 'auth_invalid_token', 'message' => 'Invalid token']
             ], 401);
         }
     }
 
+    private function extractRoles(object $decoded): array
+    {
+        // Supabase puts custom roles commonly in: app_metadata.roles (array)
+        $roles = [];
+
+        if (isset($decoded->app_metadata) && is_object($decoded->app_metadata)) {
+            $am = $decoded->app_metadata;
+
+            if (isset($am->roles) && is_array($am->roles)) {
+                $roles = $am->roles;
+            } elseif (isset($am->role) && is_string($am->role)) {
+                $roles = [$am->role];
+            }
+        }
+
+        // Also allow top-level roles claim if you ever add it
+        if (empty($roles) && isset($decoded->roles) && is_array($decoded->roles)) {
+            $roles = $decoded->roles;
+        }
+
+        // Normalize: trim, uppercase, unique
+        $roles = array_map(fn($r) => strtoupper(trim((string)$r)), $roles);
+        $roles = array_values(array_unique(array_filter($roles, fn($r) => $r !== '')));
+
+        return $roles;
+    }
+
     private function extractCompanyId(object $decoded): ?string
     {
-        // If you later add a custom claim like: company_id
         if (isset($decoded->company_id) && is_string($decoded->company_id) && Str::isUuid($decoded->company_id)) {
             return $decoded->company_id;
         }
 
-        // Or in app_metadata
         if (isset($decoded->app_metadata) && is_object($decoded->app_metadata)) {
             $am = $decoded->app_metadata;
             if (isset($am->company_id) && is_string($am->company_id) && Str::isUuid($am->company_id)) {
@@ -213,7 +231,6 @@ class VerifySupabaseJwt
             }
         }
 
-        // Or in user_metadata
         if (isset($decoded->user_metadata) && is_object($decoded->user_metadata)) {
             $um = $decoded->user_metadata;
             if (isset($um->company_id) && is_string($um->company_id) && Str::isUuid($um->company_id)) {
@@ -227,9 +244,7 @@ class VerifySupabaseJwt
     private function decodeJwt(string $jwt): object
     {
         $kid = $this->extractKid($jwt);
-        if (!$kid) {
-            throw new \RuntimeException('Missing kid');
-        }
+        if (!$kid) throw new \RuntimeException('Missing kid');
 
         $jwks = $this->getJwksCached(false);
 
@@ -244,7 +259,6 @@ class VerifySupabaseJwt
 
         JWT::$leeway = $this->leeway;
 
-        // Will validate exp/nbf automatically
         return JWT::decode($jwt, JWK::parseKeySet($jwks));
     }
 
@@ -278,9 +292,7 @@ class VerifySupabaseJwt
     private function fetchJwks(): array
     {
         $url = config('services.supabase.jwks_url');
-        if (!$url) {
-            throw new \RuntimeException('Missing services.supabase.jwks_url');
-        }
+        if (!$url) throw new \RuntimeException('Missing services.supabase.jwks_url');
 
         $json = Http::timeout(10)->get($url)->json();
 
@@ -296,9 +308,7 @@ class VerifySupabaseJwt
         if (!isset($jwks['keys']) || !is_array($jwks['keys'])) return false;
 
         foreach ($jwks['keys'] as $k) {
-            if (is_array($k) && isset($k['kid']) && $k['kid'] === $kid) {
-                return true;
-            }
+            if (is_array($k) && isset($k['kid']) && $k['kid'] === $kid) return true;
         }
 
         return false;

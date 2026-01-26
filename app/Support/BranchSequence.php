@@ -26,21 +26,20 @@ class BranchSequence
 
         if (!$row) {
             DB::table('branch_sequences')->insert([
-                'id' => (string) Str::uuid(),
-                'branch_id' => $branchId,
-                'key' => $key,
-                'last_no' => 0,
+                'id'         => (string) Str::uuid(),
+                'branch_id'  => $branchId,
+                'key'        => $key,
+                'last_no'    => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
         }
 
-        // Atomic increment, then read last_no.
         DB::table('branch_sequences')
             ->where('branch_id', $branchId)
             ->where('key', $key)
             ->update([
-                'last_no' => DB::raw('last_no + 1'),
+                'last_no'    => DB::raw('last_no + 1'),
                 'updated_at' => now(),
             ]);
 
@@ -54,9 +53,18 @@ class BranchSequence
 
     private static function advisoryLock(string $branchId, string $key): void
     {
-        // stable bigint key from md5
-        $hex = substr(md5('branch_sequence:' . $key . ':' . $branchId), 0, 15);
-        $lockKey = hexdec($hex);
+        // Create a deterministic signed 64-bit integer from sha1.
+        // We take first 8 bytes and interpret as signed int64.
+        $bytes = substr(sha1('branch_sequence:' . $key . ':' . $branchId, true), 0, 8);
+
+        // Unpack to two 32-bit unsigned ints, then combine.
+        $parts = unpack('Nhi/Nlo', $bytes);
+        $hi = (int) $parts['hi'];
+        $lo = (int) $parts['lo'];
+
+        // Combine into 64-bit signed
+        $lockKey = ($hi << 32) | $lo;
+
         DB::select('select pg_advisory_xact_lock(?)', [$lockKey]);
     }
 }
