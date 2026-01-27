@@ -117,12 +117,9 @@ class PurchaseOrderController extends Controller
 
         $companyId = AuthUser::companyId($request);
         $allowedBranchIds = AuthUser::allowedBranchIds($request);
-        if (empty($allowedBranchIds)) {
-            return response()->json(['error'=>['code'=>'no_branch_access','message'=>'No branch access']], 403);
-        }
+        if (empty($allowedBranchIds)) abort(403, 'No branch access');
 
-        // Transaction: lock PO, validate state, transition to SENT, emit event + audit
-        $po = DB::transaction(function () use ($request, $u, $companyId, $allowedBranchIds, $id) {
+        return DB::transaction(function () use ($request, $u, $companyId, $allowedBranchIds, $id) {
 
             $po = PurchaseOrder::query()
                 ->where('purchase_orders.id', $id)
@@ -132,26 +129,18 @@ class PurchaseOrderController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if (!in_array($po->branch_id, $allowedBranchIds, true)) {
-                abort(403, 'Forbidden (no branch access)');
-            }
+            if (!in_array($po->branch_id, $allowedBranchIds, true)) abort(403, 'Forbidden (no branch access)');
 
-            // Idempotent behavior: if already SENT, just return it (no re-audit)
+            // Idempotent: already SENT -> return as-is, NO side effects
             if ($po->status === 'SENT') {
-                return $po->load('items');
+                return response()->json($po->load('items'), 200);
             }
 
-            if ($po->status !== 'DRAFT') {
-                abort(422, 'PO must be DRAFT');
-            }
-
-            if (empty($po->supplier_id)) {
-                abort(422, 'PO missing supplier_id');
-            }
+            if ($po->status !== 'DRAFT') abort(422, 'PO must be DRAFT');
 
             $prev = $po->status;
 
-            $po->status  = 'SENT';
+            $po->status = 'SENT';
             $po->sent_at = now();
             $po->save();
 
@@ -169,18 +158,16 @@ class PurchaseOrderController extends Controller
                 'from' => $prev,
                 'to' => $po->status,
                 'sent_at' => (string) $po->sent_at,
-                'supplier_id' => (string) $po->supplier_id,
+                'supplier_id' => $po->supplier_id,
                 'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
             ]);
 
-            return $po->load('items');
+            // Notify supplier AFTER write (still inside tx is OK if your notifications trigger requires fields)
+            // If you dispatch jobs, prefer afterCommit().
+            // \App\Jobs\NotifySupplierNewPo::dispatch($po->id)->afterCommit();
+
+            return response()->json($po->load('items'), 200);
         });
-
-        // Dispatch OUTSIDE transaction (safe regardless of queue driver)
-        // (If queue is sync, it will run now; if async, it will enqueue now.)
-        \App\Jobs\NotifySupplierNewPo::dispatch($po->id);
-
-        return response()->json($po, 200);
     }
 
     public function show(Request $request, string $id)

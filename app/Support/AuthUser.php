@@ -37,16 +37,22 @@ class AuthUser
 
     public static function roleCodes(Profile $u): array
     {
-        $roles = [];
-
-        // Prefer Profile helper (DB roles OR injected roles)
-        if (method_exists($u, 'roleCodes')) {
-            $rc = $u->roleCodes();
-            if (is_array($rc)) $roles = $rc;
-        } elseif (isset($u->roles) && is_array($u->roles)) {
+        // 1) If already cached on the model instance, reuse it
+        if (isset($u->roles) && is_array($u->roles) && !empty($u->roles)) {
             $roles = $u->roles;
+        } else {
+            // 2) Source of truth: DB join user_roles -> roles
+            $roles = DB::table('user_roles as ur')
+                ->join('roles as r', 'r.id', '=', 'ur.role_id')
+                ->where('ur.user_id', $u->id)
+                ->pluck('r.code')
+                ->all();
+
+            // cache for this request lifecycle
+            $u->roles = $roles;
         }
 
+        // normalize
         $roles = array_map(fn ($r) => strtoupper(trim((string) $r)), $roles);
         $roles = array_values(array_unique(array_filter($roles, fn ($r) => $r !== '')));
 
@@ -136,7 +142,16 @@ class AuthUser
             if ($r !== '' && in_array($r, $userRoles, true)) return;
         }
 
-        abort(403, 'Forbidden (role)');
+        abort(response()->json([
+            'error' => [
+                'code' => 'forbidden',
+                'message' => 'Insufficient role',
+                'details' => [
+                    'required' => array_values($roles),
+                    'has' => $userRoles,
+                ],
+            ]
+        ], 403));
     }
 
     public static function requireAnyRole(Request $request, array $roles): Profile
