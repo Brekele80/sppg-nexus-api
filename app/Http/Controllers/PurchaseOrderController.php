@@ -14,6 +14,8 @@ class PurchaseOrderController extends Controller
 {
     public function createFromApprovedRab(Request $request, string $rabId)
     {
+        \Log::info('HIT createFromApprovedRab', ['rabId' => $rabId]);
+
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['PURCHASE_CABANG']);
 
@@ -90,8 +92,6 @@ class PurchaseOrderController extends Controller
                 ]);
             }
 
-            \App\Jobs\NotifySupplierNewPo::dispatch($po->id)->afterCommit();
-
             Audit::log($request, 'create', 'purchase_orders', $po->id, [
                 'branch_id' => $po->branch_id,
                 'purchase_request_id' => $po->purchase_request_id,
@@ -110,50 +110,77 @@ class PurchaseOrderController extends Controller
 
     public function sendToSupplier(Request $request, string $id)
     {
+        \Log::info('HIT sendToSupplier', ['id' => $id]);
+
         $u = AuthUser::get($request);
         AuthUser::requireRole($u, ['PURCHASE_CABANG']);
 
         $companyId = AuthUser::companyId($request);
         $allowedBranchIds = AuthUser::allowedBranchIds($request);
-        if (empty($allowedBranchIds)) abort(403, 'No branch access');
+        if (empty($allowedBranchIds)) {
+            return response()->json(['error'=>['code'=>'no_branch_access','message'=>'No branch access']], 403);
+        }
 
-        $po = PurchaseOrder::query()
-            ->where('purchase_orders.id', $id)
-            ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
-            ->where('b.company_id', $companyId)
-            ->select('purchase_orders.*')
-            ->firstOrFail();
+        // Transaction: lock PO, validate state, transition to SENT, emit event + audit
+        $po = DB::transaction(function () use ($request, $u, $companyId, $allowedBranchIds, $id) {
 
-        if (!in_array($po->branch_id, $allowedBranchIds, true)) abort(403, 'Forbidden (no branch access)');
-        if ($po->status !== 'DRAFT') abort(422, 'PO must be DRAFT');
+            $po = PurchaseOrder::query()
+                ->where('purchase_orders.id', $id)
+                ->join('branches as b', 'b.id', '=', 'purchase_orders.branch_id')
+                ->where('b.company_id', $companyId)
+                ->select('purchase_orders.*')
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $prev = $po->status;
+            if (!in_array($po->branch_id, $allowedBranchIds, true)) {
+                abort(403, 'Forbidden (no branch access)');
+            }
 
-        $po->status = 'SENT';
-        $po->sent_at = now();
-        $po->save();
+            // Idempotent behavior: if already SENT, just return it (no re-audit)
+            if ($po->status === 'SENT') {
+                return $po->load('items');
+            }
 
-        DB::table('purchase_order_events')->insert([
-            'id' => (string) Str::uuid(),
-            'purchase_order_id' => $po->id,
-            'actor_id' => $u->id,
-            'event' => 'SENT',
-            'message' => 'PO sent to supplier',
-            'metadata' => json_encode([]),
-            'created_at' => now(),
-        ]);
+            if ($po->status !== 'DRAFT') {
+                abort(422, 'PO must be DRAFT');
+            }
 
-        if ($prev !== $po->status) {
+            if (empty($po->supplier_id)) {
+                abort(422, 'PO missing supplier_id');
+            }
+
+            $prev = $po->status;
+
+            $po->status  = 'SENT';
+            $po->sent_at = now();
+            $po->save();
+
+            DB::table('purchase_order_events')->insert([
+                'id' => (string) Str::uuid(),
+                'purchase_order_id' => $po->id,
+                'actor_id' => $u->id,
+                'event' => 'SENT',
+                'message' => 'PO sent to supplier',
+                'metadata' => json_encode([]),
+                'created_at' => now(),
+            ]);
+
             Audit::log($request, 'send', 'purchase_orders', $po->id, [
                 'from' => $prev,
                 'to' => $po->status,
                 'sent_at' => (string) $po->sent_at,
-                'supplier_id' => $po->supplier_id,
+                'supplier_id' => (string) $po->supplier_id,
                 'idempotency_key' => (string) $request->header('Idempotency-Key', ''),
             ]);
-        }
 
-        return response()->json($po->load('items'), 200);
+            return $po->load('items');
+        });
+
+        // Dispatch OUTSIDE transaction (safe regardless of queue driver)
+        // (If queue is sync, it will run now; if async, it will enqueue now.)
+        \App\Jobs\NotifySupplierNewPo::dispatch($po->id);
+
+        return response()->json($po, 200);
     }
 
     public function show(Request $request, string $id)

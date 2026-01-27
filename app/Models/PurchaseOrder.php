@@ -12,6 +12,9 @@ class PurchaseOrder extends Model
 
     protected $table = 'purchase_orders';
 
+    public $incrementing = false;
+    protected $keyType = 'string';
+
     protected $fillable = [
         'id','branch_id','purchase_request_id','rab_version_id','created_by','supplier_id',
         'po_number','status','currency','subtotal','tax','total',

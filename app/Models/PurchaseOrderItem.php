@@ -10,6 +10,11 @@ class PurchaseOrderItem extends Model
 {
     use HasUuids;
 
+    protected $table = 'purchase_order_items';
+
+    public $incrementing = false;
+    protected $keyType = 'string';
+
     protected $fillable = [
         'purchase_order_id',
         'item_name',
