@@ -27,6 +27,7 @@ use App\Http\Controllers\BranchController;
 use App\Http\Controllers\InventoryItemController;
 use App\Http\Controllers\InventoryLotController;
 use App\Http\Controllers\InventoryMovementVoidController;
+use App\Http\Controllers\AuditExportController;
 
 /*
 |--------------------------------------------------------------------------
@@ -204,5 +205,8 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
                 ->whereUuid('id')
                 ->whereUuid('attId');
         });
+
+        Route::middleware(['requireRole:ACCOUNTING,KA_SPPG,DC_ADMIN', 'throttle:5,1'])
+            ->get('/audit/exports/{scope}', [AuditExportController::class, 'export']);
     });
 });
