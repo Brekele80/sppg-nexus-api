@@ -160,4 +160,15 @@ class AuthUser
         self::requireRole($u, $roles);
         return $u;
     }
+
+    public static function actorUuid(Request $request): string
+    {
+        $u = self::get($request);
+
+        if (empty($u->supabase_user_id)) {
+            abort(500, 'User missing supabase_user_id (ledger violation)');
+        }
+
+        return (string) $u->supabase_user_id;
+    }
 }
