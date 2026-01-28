@@ -23,7 +23,7 @@ class AuditExportService
             Carbon::parse($to)->format('Ymd')
         );
 
-        // Normalize date range to full-day bounds (audit safe)
+        // Normalize date range to full-day bounds (forensic safe)
         $fromTs = Carbon::parse($from)->startOfDay();
         $toTs   = Carbon::parse($to)->endOfDay();
 
@@ -47,7 +47,7 @@ class AuditExportService
                 $itemId,
                 $requestedBy
             ) {
-                // Forensic audit log
+                // Immutable forensic audit log
                 DB::table('audit_exports')->insert([
                     'id' => Str::uuid()->toString(),
                     'company_id' => $companyId,
@@ -64,49 +64,45 @@ class AuditExportService
 
                 $out = fopen('php://output', 'w');
 
-                // CSV Header
+                // CSV Header (matches real schema)
                 fputcsv($out, [
                     'movement_id',
                     'movement_datetime',
                     'company_id',
                     'branch_id',
-                    'item_id',
+                    'inventory_item_id',
                     'item_sku',
                     'item_name',
-                    'lot_id',
+                    'inventory_lot_id',
                     'reference_type',
                     'reference_id',
                     'direction',
                     'quantity',
-                    'balance_after',
                     'unit',
-                    'created_by',
+                    'actor_id',
                     'created_at'
                 ]);
 
                 $query = DB::table('inventory_movements as m')
-                    ->join('inventory_items as i', 'm.item_id', '=', 'i.id')
-                    ->leftJoin('inventory_lots as l', 'm.lot_id', '=', 'l.id')
+                    ->join('inventory_items as i', 'm.inventory_item_id', '=', 'i.id')
+                    ->leftJoin('inventory_lots as l', 'm.inventory_lot_id', '=', 'l.id')
                     ->where('m.company_id', $companyId)
-                    ->whereBetween('m.movement_date', [$fromTs, $toTs])
-                    ->orderBy('m.movement_date')
+                    ->whereBetween('m.created_at', [$fromTs, $toTs])
                     ->orderBy('m.created_at')
                     ->select([
                         'm.id as movement_id',
-                        'm.movement_date',
                         'm.company_id',
                         'm.branch_id',
-                        'm.item_id',
+                        'm.inventory_item_id',
                         'i.sku as item_sku',
                         'i.name as item_name',
-                        'm.lot_id',
-                        'm.reference_type',
-                        'm.reference_id',
-                        'm.direction',
-                        'm.quantity',
-                        'm.balance_after',
+                        'm.inventory_lot_id',
+                        'm.ref_type',
+                        'm.ref_id',
+                        'm.type',
+                        'm.qty',
                         'i.unit',
-                        'm.created_by',
+                        'm.actor_id',
                         'm.created_at'
                     ]);
 
@@ -115,27 +111,26 @@ class AuditExportService
                 }
 
                 if ($itemId) {
-                    $query->where('m.item_id', $itemId);
+                    $query->where('m.inventory_item_id', $itemId);
                 }
 
                 $query->chunk(500, function ($rows) use ($out) {
                     foreach ($rows as $row) {
                         fputcsv($out, [
                             $row->movement_id,
-                            $row->movement_date,
+                            $row->created_at,
                             $row->company_id,
                             $row->branch_id,
-                            $row->item_id,
+                            $row->inventory_item_id,
                             $row->item_sku,
                             $row->item_name,
-                            $row->lot_id,
-                            $row->reference_type,
-                            $row->reference_id,
-                            $row->direction,
-                            $row->quantity,
-                            $row->balance_after,
+                            $row->inventory_lot_id,
+                            $row->ref_type,
+                            $row->ref_id,
+                            $row->type,
+                            $row->qty,
                             $row->unit,
-                            $row->created_by,
+                            $row->actor_id,
                             $row->created_at,
                         ]);
                     }
