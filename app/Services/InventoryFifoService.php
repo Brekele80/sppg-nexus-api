@@ -10,11 +10,13 @@ class InventoryFifoService
 {
     /**
      * Consume inventory using DB-enforced FIFO.
-     * Audit laws:
+     *
+     * Audit Laws:
      * - Actor MUST be UUID
      * - Idempotent
      * - Tenant + branch scoped
-     * - Projection recomputed from lots inside same transaction
+     * - Projection recomputed from FIFO lots
+     * - Journal entry created atomically
      */
     public static function consume(
         string $companyId,
@@ -23,7 +25,7 @@ class InventoryFifoService
         float $quantity,
         string $sourceType,
         string $sourceId,
-        string $actorUuid,       // MUST be UUID
+        string $actorUuid,
         string $idempotencyKey
     ): void {
         if ($quantity <= 0) {
@@ -50,10 +52,11 @@ class InventoryFifoService
         ) {
             /**
              * FIFO Consume
-             * This function:
-             * - Locks FIFO lots
-             * - Writes immutable ledger rows
-             * - Enforces oversell protection
+             * DB function:
+             * - Locks lots
+             * - Enforces FIFO
+             * - Prevents oversell
+             * - Writes inventory_movements ledger
              * - Enforces idempotency
              */
             DB::statement(
@@ -72,7 +75,7 @@ class InventoryFifoService
 
             /**
              * Projection Law
-             * on_hand MUST be derived from FIFO lots — never from ledger
+             * on_hand MUST be derived from FIFO lots
              */
             $onHand = DB::table('inventory_lots')
                 ->where('company_id', $companyId)
@@ -85,10 +88,14 @@ class InventoryFifoService
                 ->where('company_id', $companyId)
                 ->where('branch_id', $branchId)
                 ->update([
-                    'on_hand'    => $onHand,
-                    'updated_at'=> now(),
+                    'on_hand'     => $onHand,
+                    'updated_at' => now(),
                 ]);
 
+            /**
+             * Journal Hook
+             * Generates double-entry rows from inventory_movements + FIFO lots
+             */
             DB::statement(
                 'SELECT journal_from_inventory_out(?, ?, ?, ?, ?)',
                 [
@@ -96,7 +103,9 @@ class InventoryFifoService
                     $branchId,
                     $sourceType,
                     $sourceId,
-                ]);
+                    $actorUuid
+                ]
+            );
         }, 3); // retry on serialization/deadlock
     }
 
