@@ -65,6 +65,10 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
     // Read-only audit (admin roles only)
     Route::middleware(['requireRole:ACCOUNTING,KA_SPPG,DC_ADMIN'])->group(function () {
         Route::get('/audit', [AuditController::class, 'index']);
+        Route::prefix('accounting')->group(function () {
+            Route::get('/journal/preview', [\App\Http\Controllers\Accounting\JournalPreviewController::class, 'preview']);
+            Route::get('/exports/gl', [\App\Http\Controllers\Accounting\GlExportController::class, 'export']);
+        });
     });
 
     // Inventory reads

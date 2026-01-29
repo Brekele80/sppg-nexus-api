@@ -7,6 +7,10 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
+        if (Schema::hasTable('audit_exports')) {
+            return;
+        }
+
         Schema::create('audit_exports', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->uuid('company_id')->index();
