@@ -88,6 +88,15 @@ class InventoryFifoService
                     'on_hand'    => $onHand,
                     'updated_at'=> now(),
                 ]);
+
+            DB::statement(
+                'SELECT journal_from_inventory_out(?, ?, ?, ?, ?)',
+                [
+                    $companyId,
+                    $branchId,
+                    $sourceType,
+                    $sourceId,
+                ]);
         }, 3); // retry on serialization/deadlock
     }
 
