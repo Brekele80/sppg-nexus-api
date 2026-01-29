@@ -1,0 +1,170 @@
+openapi: 3.1.0
+info:
+  title: SPPG Nexus API
+  version: 1.0.0
+  description: Audit-first FIFO procurement, inventory, and government reporting system
+
+servers:
+  - url: https://api.sppg-nexus.id
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    X-Company-Id:
+      name: X-Company-Id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+
+    X-Branch-Id:
+      name: X-Branch-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+
+
+    X-Request-Id:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema:
+        type: string
+
+
+    X-Idempotency-Key:
+      name: X-Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+
+  schemas:
+    FifoConsumeRequest:
+      type: object
+      required:
+        - item_id
+        - qty
+        - source_type
+        - source_id
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        qty:
+          type: number
+          minimum: 0.0001
+        source_type:
+          type: string
+          example: KITCHEN_OUT
+        source_id:
+          type: string
+          format: uuid
+
+    JournalRow:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        account_code:
+          type: string
+        account_name:
+          type: string
+        debit:
+          type: number
+        credit:
+          type: number
+        reference:
+          type: string
+
+paths:
+  /inventory/consume:
+    post:
+      summary: FIFO consume inventory
+      parameters:
+        - $ref: '#/components/headers/X-Company-Id'
+        - $ref: '#/components/headers/X-Branch-Id'
+        - $ref: '#/components/headers/X-Request-Id'
+        - $ref: '#/components/headers/X-Idempotency-Key'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FifoConsumeRequest'
+      responses:
+        "200":
+          description: FIFO consumption posted
+        "409":
+          description: Insufficient stock
+        "422":
+          description: Validation error
+
+  /accounting/journal/preview:
+    get:
+      summary: Preview journal entries
+      operationId: journalPreview
+      parameters:
+        - $ref: '#/components/parameters/X-Company-Id'
+        - $ref: '#/components/parameters/X-Branch-Id'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+      "200":
+        description: Journal preview
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/JournalRow'
+
+  /exports/gl:
+    get:
+      summary: Export GL journal CSV
+      operationId: exportGL
+      parameters:
+        - $ref: '#/components/headers/X-Company-Id'
+        - $ref: '#/components/headers/X-Branch-Id'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
