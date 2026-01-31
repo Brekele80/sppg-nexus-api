@@ -37,4 +37,9 @@ return [
         'audience' => env('SUPABASE_AUDIENCE', 'authenticated'),
     ],
 
+    'signing' => [
+        'url' => env('SIGNING_SERVICE_URL', 'http://signing:7400'),
+        'token' => env('SIGNING_SERVICE_TOKEN'),
+    ],
+
 ];
