@@ -29,6 +29,8 @@ use App\Http\Controllers\InventoryLotController;
 use App\Http\Controllers\InventoryMovementVoidController;
 use App\Http\Controllers\AuditExportController;
 
+use App\Http\Controllers\DC\MenuController;
+
 /*
 |--------------------------------------------------------------------------
 | Public
@@ -81,6 +83,9 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
         Route::get('/branches', [BranchController::class, 'index']);
         Route::get('/inventory-items', [InventoryItemController::class, 'index']);
         Route::get('/inventory-lots', [InventoryLotController::class, 'index']);
+
+        Route::get('/menus', [MenuController::class, 'index']);
+        Route::get('/menus/{id}', [MenuController::class, 'show']);
     });
 
     // Read PO
@@ -177,6 +182,13 @@ Route::middleware(['supabase', 'requireCompany'])->group(function () {
             Route::post('pos/{id}/confirm', [SupplierPortalController::class, 'confirm'])->whereUuid('id');
             Route::post('pos/{id}/reject', [SupplierPortalController::class, 'reject'])->whereUuid('id');
             Route::post('pos/{id}/delivered', [SupplierPortalController::class, 'markDelivered'])->whereUuid('id');
+        });
+
+        Route::middleware(['requireRole:DC_ADMIN,CHEF'])->prefix('dc')->group(function () {
+            Route::post('/menus', [MenuController::class, 'store']);
+
+            Route::post('/menus/{id}/publish', [MenuController::class, 'publish'])
+                ->whereUuid('id');
         });
 
         // DC operational writes: DC_ADMIN only (recommended)
