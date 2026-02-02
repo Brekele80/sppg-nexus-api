@@ -6,47 +6,66 @@ use App\Http\Controllers\Controller;
 use App\Models\Menu;
 use App\Models\MenuRecipe;
 use App\Models\RecipeIngredient;
-use App\Services\MenuForecastService;
-use App\Services\MenuAutoPrService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Support\AuthUser;
 
 class MenuController extends Controller
 {
     public function index(Request $request)
     {
-        return Menu::where('company_id', $request->company_id)
-            ->where('branch_id', $request->branch_id)
+        $u = $request->attributes->get('auth_user');
+        AuthUser::requireBranch($u);
+
+        return Menu::where('company_id', $u->company_id)
+            ->where('branch_id', $u->branch_id)
             ->orderByDesc('created_at')
             ->get();
     }
 
     public function show(Request $request, string $id)
     {
-        $menu = Menu::where('id', $id)
-            ->where('company_id', $request->company_id)
-            ->where('branch_id', $request->branch_id)
+        $u = $request->attributes->get('auth_user');
+        AuthUser::requireBranch($u);
+
+        return Menu::where('id', $id)
+            ->where('company_id', $u->company_id)
+            ->where('branch_id', $u->branch_id)
             ->with('recipes.ingredients')
             ->firstOrFail();
-
-        return $menu;
     }
 
     public function store(Request $request)
     {
-        return DB::transaction(function () use ($request) {
+        $u = $request->attributes->get('auth_user');
+        AuthUser::requireRole($u, ['CHEF', 'DC_ADMIN']);
+        AuthUser::requireBranch($u);
+
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string'],
+            'recipes' => ['required', 'array', 'min:1'],
+            'recipes.*.name' => ['required', 'string'],
+            'recipes.*.servings' => ['required', 'numeric', 'min:1'],
+            'recipes.*.ingredients' => ['required', 'array', 'min:1'],
+            'recipes.*.ingredients.*.inventory_item_id' => ['required', 'uuid'],
+            'recipes.*.ingredients.*.qty_per_serving' => ['required', 'numeric', 'min:0.0001'],
+            'recipes.*.ingredients.*.unit' => ['required', 'string']
+        ]);
+
+        return DB::transaction(function () use ($data, $u) {
             $menu = Menu::create([
                 'id' => Str::uuid(),
-                'company_id' => $request->company_id,
-                'branch_id' => $request->branch_id,
-                'name' => $request->name,
-                'description' => $request->description,
+                'company_id' => $u->company_id,
+                'branch_id' => $u->branch_id,
+                'name' => $data['name'],
+                'description' => $data['description'] ?? null,
                 'version' => 1,
-                'created_by' => $request->user()->id
+                'created_by' => $u->id
             ]);
 
-            foreach ($request->recipes as $r) {
+            foreach ($data['recipes'] as $r) {
                 $recipe = MenuRecipe::create([
                     'id' => Str::uuid(),
                     'menu_id' => $menu->id,
@@ -71,9 +90,13 @@ class MenuController extends Controller
 
     public function publish(Request $request, string $id)
     {
+        $u = $request->attributes->get('auth_user');
+        AuthUser::requireRole($u, ['CHEF', 'DC_ADMIN']);
+        AuthUser::requireBranch($u);
+
         $menu = Menu::where('id', $id)
-            ->where('company_id', $request->company_id)
-            ->where('branch_id', $request->branch_id)
+            ->where('company_id', $u->company_id)
+            ->where('branch_id', $u->branch_id)
             ->firstOrFail();
 
         $menu->update([
@@ -82,26 +105,5 @@ class MenuController extends Controller
         ]);
 
         return $menu;
-    }
-
-    public function forecast(Request $request, string $id)
-    {
-        return MenuForecastService::forecast(
-            $id,
-            $request->days,
-            $request->meals_per_day
-        );
-    }
-
-    public function generatePr(Request $request, string $id)
-    {
-        return MenuAutoPrService::generate(
-            $request->company_id,
-            $request->branch_id,
-            $id,
-            $request->days,
-            $request->meals_per_day,
-            $request->user()->id
-        );
     }
 }

@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\DC;
 
 use App\Http\Controllers\Controller;
+use App\Models\Menu;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\AuthUser;
 
 class MenuForecastController extends Controller
 {
@@ -17,22 +19,32 @@ class MenuForecastController extends Controller
      *   "meals_per_day": 300
      * }
      */
-    public function forecast(Request $request, string $menuId)
+    public function preview(Request $request, string $menuId)
     {
-        $companyId = $request->attributes->get('company_id');
-        $branchId = $request->attributes->get('branch_id');
+        $u = $request->attributes->get('auth_user');
+        AuthUser::requireRole($u, ['CHEF', 'DC_ADMIN', 'ACCOUNTING', 'KA_SPPG']);
+        AuthUser::requireBranch($u);
+
+        $companyId = $u->company_id;
+        $branchId  = $u->branch_id;
+
+        // Enforce tenant + branch ownership of menu
+        $menu = Menu::where('id', $menuId)
+            ->where('company_id', $companyId)
+            ->where('branch_id', $branchId)
+            ->firstOrFail();
 
         $data = $request->validate([
-            'days' => 'required|integer|min:1|max:90',
-            'meals_per_day' => 'required|integer|min:1|max:100000'
+            'days' => ['required', 'integer', 'min:1', 'max:90'],
+            'meals_per_day' => ['required', 'integer', 'min:1', 'max:100000'],
         ]);
 
-        $days = $data['days'];
+        $days         = $data['days'];
         $mealsPerDay = $data['meals_per_day'];
         $totalServings = $days * $mealsPerDay;
 
         /**
-         * Pull ingredient demand
+         * Pull ingredient demand (per meal)
          */
         $ingredients = DB::table('menu_recipes as mr')
             ->join('recipe_ingredients as ri', 'ri.recipe_id', '=', 'mr.recipe_id')
@@ -109,8 +121,8 @@ class MenuForecastController extends Controller
 
             $results[] = [
                 'inventory_item_id' => $row->inventory_item_id,
-                'ingredient_name' => $row->ingredient_name,
-                'unit' => $row->unit,
+                'ingredient_name'   => $row->ingredient_name,
+                'unit'             => $row->unit,
 
                 'forecast' => [
                     'days' => $days,
@@ -122,13 +134,11 @@ class MenuForecastController extends Controller
                 'fifo' => [
                     'available_qty' => round($availableQty, 4),
                     'sufficient' => $fifoSufficient,
-                    'lots' => $fifoLots->map(function ($lot) {
-                        return [
-                            'lot_id' => $lot->id,
-                            'remaining_qty' => round($lot->remaining_qty, 4),
-                            'received_at' => $lot->received_at
-                        ];
-                    })
+                    'lots' => $fifoLots->map(fn ($lot) => [
+                        'lot_id' => $lot->id,
+                        'remaining_qty' => round($lot->remaining_qty, 4),
+                        'received_at' => $lot->received_at
+                    ])->values()
                 ],
 
                 'supplier' => $supplierMap ? [
