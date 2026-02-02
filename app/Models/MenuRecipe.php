@@ -5,21 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
-class Menu extends Model
+class MenuRecipe extends Model
 {
     public $incrementing = false;
     protected $keyType = 'string';
 
     protected $fillable = [
         'id',
-        'company_id',
-        'branch_id',
+        'menu_id',
         'name',
-        'description',
-        'version',
-        'is_published',
-        'published_at',
-        'created_by'
+        'servings'
     ];
 
     protected static function booted() {
@@ -28,7 +23,7 @@ class Menu extends Model
         });
     }
 
-    public function recipes() {
-        return $this->hasMany(MenuRecipe::class);
+    public function ingredients() {
+        return $this->hasMany(RecipeIngredient::class, 'recipe_id');
     }
 }
