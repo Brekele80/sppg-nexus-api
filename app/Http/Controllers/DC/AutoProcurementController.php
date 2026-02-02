@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 
 class AutoProcurementController extends Controller
 {
-    public function generatePR(Request $request, $menuId)
+    public function generatePR(Request $request, string $menuId)
     {
         $companyId = $request->attributes->get('company_id');
 
@@ -20,13 +20,12 @@ class AutoProcurementController extends Controller
         return DB::transaction(function () use ($companyId, $menuId, $data) {
             $branchId = $data['branch_id'];
 
-            // Pull menu ingredient demand
             $ingredients = DB::table('menu_recipes as mr')
-                ->join('recipe_ingredients as ri', 'ri.recipe_id', '=', 'mr.recipe_id')
+                ->join('recipe_ingredients as ri', 'ri.recipe_id', '=', 'mr.id')
                 ->where('mr.menu_id', $menuId)
                 ->select([
                     'ri.inventory_item_id',
-                    DB::raw('SUM(ri.qty * mr.servings) as total_qty'),
+                    DB::raw('SUM(ri.qty_per_serving * mr.servings) as total_qty'),
                     'ri.unit'
                 ])
                 ->groupBy('ri.inventory_item_id', 'ri.unit')
